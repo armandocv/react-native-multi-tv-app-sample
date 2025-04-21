@@ -36,12 +36,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const currentUser = await Auth.currentAuthenticatedUser();
 
       if (currentUser) {
+        console.log('User authenticated:', currentUser.username);
         setIsAuthenticated(true);
         setUser({
           username: currentUser.username || 'User',
           email: currentUser.attributes?.email || '',
         });
+
+        // Verify we can get a valid token
+        try {
+          const session = await Auth.currentSession();
+          const token = session.getIdToken().getJwtToken();
+          console.log('Valid token obtained');
+        } catch (tokenError) {
+          console.error('Error getting token:', tokenError);
+        }
       } else {
+        console.log('No authenticated user found');
         setIsAuthenticated(false);
         setUser(null);
       }

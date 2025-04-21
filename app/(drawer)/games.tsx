@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, Image, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Image, ActivityIndicator, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { scaledPixels } from '@/hooks/useScale';
@@ -57,21 +57,29 @@ export default function GamesScreen() {
   const fetchGames = async () => {
     try {
       setLoading(true);
+      console.log('Fetching games from API...');
 
       // Try to fetch games from API
       let fetchedGames: Game[];
       try {
         fetchedGames = await getGames();
+        console.log('Successfully fetched games:', fetchedGames.length);
       } catch (err) {
         console.warn('Failed to fetch games from API, using fallback data:', err);
+        Alert.alert('API Error', 'Failed to fetch games from the server. Using fallback data instead.', [
+          { text: 'OK' },
+        ]);
         fetchedGames = FALLBACK_GAMES;
       }
 
       // Filter games by selected regions
       const filteredGames = fetchedGames.filter((game) => {
-        return selectedRegions.some((region) => game.regions?.includes(region));
+        return (
+          !game.regions || game.regions.length === 0 || selectedRegions.some((region) => game.regions?.includes(region))
+        );
       });
 
+      console.log('Filtered games:', filteredGames.length);
       setGames(filteredGames);
       setError(null);
     } catch (err) {

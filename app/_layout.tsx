@@ -10,8 +10,23 @@ import { AuthProvider } from '../context/AuthContext';
 import { Amplify } from 'aws-amplify';
 import awsconfig from '../aws-exports';
 
-// Configure Amplify
-Amplify.configure(awsconfig);
+// Configure Amplify with complete configuration
+Amplify.configure({
+  ...awsconfig,
+  Auth: {
+    region: awsconfig.aws_cognito_region,
+    userPoolId: awsconfig.aws_user_pools_id,
+    userPoolWebClientId: awsconfig.aws_user_pools_web_client_id,
+  },
+  API: {
+    endpoints: [
+      {
+        name: 'gamelift-api',
+        endpoint: awsconfig.API.REST['gamelift-api'].endpoint,
+      },
+    ],
+  },
+});
 
 import './configureRemoteControl';
 
