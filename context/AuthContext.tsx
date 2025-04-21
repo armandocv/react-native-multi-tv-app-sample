@@ -7,6 +7,7 @@ interface AuthContextType {
   user: any | null;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  signOut: () => Promise<void>; // Added signOut as an alias for logout
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -15,6 +16,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   login: async () => {},
   logout: async () => {},
+  signOut: async () => {}, // Added signOut as an alias for logout
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -86,6 +88,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         login,
         logout,
+        signOut: logout, // Add signOut as an alias for logout
       }}
     >
       {children}
