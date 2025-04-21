@@ -1,100 +1,159 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, Image } from 'react-native';
+import { View, Text, StyleSheet, FlatList, Image, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { scaledPixels } from '@/hooks/useScale';
-import { SpatialNavigationFocusableView } from 'react-tv-space-navigation';
+import { SpatialNavigationFocusableView, SpatialNavigationRoot } from 'react-tv-space-navigation';
+import { getGames, Game } from '../../services/GameService';
 
-// Mock data for games - replace with actual API call to GameLift
-const MOCK_GAMES = [
+// Fallback mock data in case API fails
+const FALLBACK_GAMES = [
   {
-    id: '1',
-    title: 'Space Explorer',
+    sgId: '1',
+    appId: 'app1',
+    name: 'Space Explorer',
     description: 'Explore the vast universe in this epic space adventure',
-    imageUrl: require('@/assets/images/logo.png'),
+    preview: 'space.jpg',
+    ordering: 1,
+    regions: ['us-west-2'],
+    staticTile: false,
+    supportedInputs: ['Keyboard', 'Mouse', 'Controller'],
   },
   {
-    id: '2',
-    title: 'Racing Legends',
+    sgId: '2',
+    appId: 'app2',
+    name: 'Racing Legends',
     description: 'High-speed racing with customizable vehicles',
-    imageUrl: require('@/assets/images/logo.png'),
-  },
-  {
-    id: '3',
-    title: 'Fantasy Quest',
-    description: 'Embark on an epic journey through magical realms',
-    imageUrl: require('@/assets/images/logo.png'),
-  },
-  {
-    id: '4',
-    title: 'Zombie Survival',
-    description: 'Survive in a post-apocalyptic world filled with zombies',
-    imageUrl: require('@/assets/images/logo.png'),
+    preview: 'racing.jpg',
+    ordering: 2,
+    regions: ['us-west-2'],
+    staticTile: false,
+    supportedInputs: ['Keyboard', 'Controller'],
   },
 ];
 
 export default function GamesScreen() {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
-  const [games, setGames] = useState(MOCK_GAMES);
+  const [games, setGames] = useState<Game[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedRegions, setSelectedRegions] = useState(['us-west-2']); // Default region
   const styles = useStyles();
 
   useEffect(() => {
     // Check if user is authenticated
     if (!isLoading && !isAuthenticated) {
       router.replace('/login');
+      return;
     }
 
-    // Here you would fetch games from GameLift API
-    // For now, we're using mock data
+    // Fetch games from API
+    if (isAuthenticated) {
+      fetchGames();
+    }
   }, [isAuthenticated, isLoading, router]);
 
-  const handleGameSelect = (gameId: string) => {
-    // Here you would launch the game using GameLift streams
-    console.log(`Starting game: ${gameId}`);
-    // Example: router.push(`/game-player?id=${gameId}`);
+  const fetchGames = async () => {
+    try {
+      setLoading(true);
+
+      // Try to fetch games from API
+      let fetchedGames: Game[];
+      try {
+        fetchedGames = await getGames();
+      } catch (err) {
+        console.warn('Failed to fetch games from API, using fallback data:', err);
+        fetchedGames = FALLBACK_GAMES;
+      }
+
+      // Filter games by selected regions
+      const filteredGames = fetchedGames.filter((game) => {
+        return selectedRegions.some((region) => game.regions?.includes(region));
+      });
+
+      setGames(filteredGames);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to process games:', err);
+      setError('Failed to load games. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  if (isLoading) {
+  const handleGameSelect = (game: Game) => {
+    // Navigate to game player with game details
+    router.push({
+      pathname: '/game-player',
+      params: {
+        id: `${game.appId}|${game.sgId}`,
+        appId: game.appId,
+        sgId: game.sgId,
+        name: game.name,
+        regions: JSON.stringify(selectedRegions),
+      },
+    });
+  };
+
+  if (isLoading || loading) {
     return (
       <View style={styles.container}>
-        <Text style={styles.loadingText}>Loading...</Text>
+        <ActivityIndicator size="large" color="#3498db" />
+        <Text style={styles.loadingText}>Loading games...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>{error}</Text>
+        <Text style={styles.retryText} onPress={fetchGames}>
+          Retry
+        </Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Games</Text>
-      <Text style={styles.subtitle}>Select a game to play via GameLift Streams</Text>
+    <SpatialNavigationRoot>
+      <View style={styles.container}>
+        <Text style={styles.title}>Games</Text>
+        <Text style={styles.subtitle}>Select a game to play via GameLift Streams</Text>
 
-      <FlatList
-        data={games}
-        numColumns={2}
-        contentContainerStyle={styles.gridContainer}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <SpatialNavigationFocusableView onSelect={() => handleGameSelect(item.id)}>
-            {({ isFocused }) => (
-              <View style={[styles.gameCard, isFocused && styles.gameCardFocused]}>
-                <Image source={item.imageUrl} style={styles.gameImage} />
-                <View style={styles.gameInfo}>
-                  <Text style={[styles.gameTitle, isFocused && styles.gameTitleFocused]}>{item.title}</Text>
-                  <Text style={[styles.gameDescription, isFocused && styles.gameDescriptionFocused]}>
-                    {item.description}
-                  </Text>
-                  {isFocused && (
-                    <View style={styles.playButton}>
-                      <Text style={styles.playButtonText}>PLAY NOW</Text>
+        {games.length === 0 ? (
+          <Text style={styles.noGamesText}>No games available in the selected regions</Text>
+        ) : (
+          <FlatList
+            data={games}
+            numColumns={2}
+            contentContainerStyle={styles.gridContainer}
+            keyExtractor={(item) => `${item.appId}|${item.sgId}`}
+            renderItem={({ item }) => (
+              <SpatialNavigationFocusableView onSelect={() => handleGameSelect(item)}>
+                {({ isFocused }) => (
+                  <View style={[styles.gameCard, isFocused && styles.gameCardFocused]}>
+                    <Image source={require('@/assets/images/logo.png')} style={styles.gameImage} />
+                    <View style={styles.gameInfo}>
+                      <Text style={[styles.gameTitle, isFocused && styles.gameTitleFocused]}>{item.name}</Text>
+                      <Text style={[styles.gameDescription, isFocused && styles.gameDescriptionFocused]}>
+                        {item.description}
+                      </Text>
+                      {isFocused && (
+                        <View style={styles.playButton}>
+                          <Text style={styles.playButtonText}>PLAY NOW</Text>
+                        </View>
+                      )}
                     </View>
-                  )}
-                </View>
-              </View>
+                  </View>
+                )}
+              </SpatialNavigationFocusableView>
             )}
-          </SpatialNavigationFocusableView>
+          />
         )}
-      />
-    </View>
+      </View>
+    </SpatialNavigationRoot>
   );
 }
 
@@ -117,6 +176,25 @@ const useStyles = () => {
       marginBottom: scaledPixels(30),
     },
     loadingText: {
+      fontSize: scaledPixels(24),
+      color: 'white',
+      textAlign: 'center',
+      marginTop: scaledPixels(100),
+    },
+    errorText: {
+      fontSize: scaledPixels(24),
+      color: '#e74c3c',
+      textAlign: 'center',
+      marginTop: scaledPixels(100),
+    },
+    retryText: {
+      fontSize: scaledPixels(20),
+      color: '#3498db',
+      textAlign: 'center',
+      marginTop: scaledPixels(20),
+      textDecorationLine: 'underline',
+    },
+    noGamesText: {
       fontSize: scaledPixels(24),
       color: 'white',
       textAlign: 'center',

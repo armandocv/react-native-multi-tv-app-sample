@@ -48,6 +48,7 @@
     "react-native-screens": "3.31.1",
     "react-native-video": "^6.8.0",
     "react-native-web": "~0.19.10",
+    "react-native-webview": "^13.6.4",
     "react-tv-space-navigation": "^3.6.1"
   },
   "devDependencies": {

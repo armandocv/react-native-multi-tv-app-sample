@@ -47,6 +47,7 @@ export default function RootLayout() {
             <Stack.Screen name="details" />
             <Stack.Screen name="player" />
             <Stack.Screen name="login" options={{ headerShown: false }} />
+            <Stack.Screen name="game-player" options={{ headerShown: false }} />
           </Stack>
         </ThemeProvider>
       </MenuProvider>

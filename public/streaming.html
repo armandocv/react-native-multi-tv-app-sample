@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GameLift Streaming</title>
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #000;
+    }
+    #videoContainer {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    audio {
+      display: none;
+    }
+    #controls {
+      position: absolute;
+      bottom: 20px;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: center;
+    }
+    button {
+      background-color: rgba(52, 152, 219, 0.7);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      margin: 0 10px;
+      cursor: pointer;
+    }
+    #status {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="videoContainer">
+    <video id="streamVideo" autoplay playsinline></video>
+    <audio id="streamAudio" autoplay></audio>
+  </div>
+  <div id="status">Initializing...</div>
+  <div id="controls">
+    <button id="fullscreenBtn">Fullscreen</button>
+    <button id="closeBtn">Close</button>
+  </div>
+
+  <script src="gameliftstreams-1.0.0.js"></script>
+  <script>
+    // Set log level for debugging
+    gameliftstreams.setLogLevel('debug');
+    
+    // Get session data from React Native
+    const sessionData = window.SESSION_DATA || {
+      sessionArn: '',
+      region: '',
+      appId: '',
+      sgId: '',
+      signalResponse: ''
+    };
+    
+    const videoElement = document.getElementById('streamVideo');
+    const audioElement = document.getElementById('streamAudio');
+    const statusElement = document.getElementById('status');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const closeBtn = document.getElementById('closeBtn');
+    
+    let gameliftstreamsInstance = null;
+    
+    // Initialize GameLift Streams
+    async function initializeStreaming() {
+      try {
+        statusElement.textContent = 'Initializing GameLift Streams...';
+        
+        gameliftstreamsInstance = new gameliftstreams.GameLiftStreams({
+          videoElement,
+          audioElement,
+          inputConfiguration: {
+            autoMouse: true,
+            autoKeyboard: true,
+            autoGamepad: true,
+            hapticFeedback: true,
+            setCursor: 'visibility',
+            autoPointerLock: 'fullscreen'
+          },
+          clientConnection: {
+            connectionState: (state) => {
+              console.log('Connection state:', state);
+              statusElement.textContent = `Connection: ${state}`;
+              
+              if (state === 'disconnected') {
+                sendMessageToReactNative({ type: 'SESSION_ENDED' });
+              }
+            },
+            channelError: (error) => {
+              console.error('Channel error:', error);
+              statusElement.textContent = `Error: ${error}`;
+            },
+            serverDisconnect: (reason) => {
+              console.log('Server disconnected:', reason);
+              statusElement.textContent = `Disconnected: ${reason}`;
+              
+              if (reason === 'terminated') {
+                sendMessageToReactNative({ type: 'SESSION_ENDED' });
+              }
+            }
+          }
+        });
+        
+        // Process the signal response from the session
+        await gameliftstreamsInstance.processSignalResponse(sessionData.signalResponse);
+        
+        // Attach input
+        gameliftstreamsInstance.attachInput();
+        
+        statusElement.textContent = 'Streaming active';
+      } catch (error) {
+        console.error('Error initializing streaming:', error);
+        statusElement.textContent = `Error: ${error.message}`;
+      }
+    }
+    
+    // Send message back to React Native
+    function sendMessageToReactNative(message) {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify(message));
+      }
+    }
+    
+    // Handle fullscreen button
+    fullscreenBtn.addEventListener('click', () => {
+      if (videoElement.requestFullscreen) {
+        videoElement.requestFullscreen();
+      } else if (videoElement.webkitRequestFullscreen) {
+        videoElement.webkitRequestFullscreen();
+      } else if (videoElement.msRequestFullscreen) {
+        videoElement.msRequestFullscreen();
+      }
+    });
+    
+    // Handle close button
+    closeBtn.addEventListener('click', () => {
+      if (gameliftstreamsInstance) {
+        gameliftstreamsInstance.close();
+      }
+      sendMessageToReactNative({ type: 'SESSION_ENDED' });
+    });
+    
+    // Initialize when document is ready
+    document.addEventListener('DOMContentLoaded', () => {
+      if (sessionData.sessionArn) {
+        initializeStreaming();
+      } else {
+        statusElement.textContent = 'Error: Missing session data';
+      }
+    });
+  </script>
+</body>
+</html>
