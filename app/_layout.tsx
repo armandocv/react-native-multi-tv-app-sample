@@ -6,8 +6,14 @@ import { useCallback, useEffect } from 'react';
 
 import { MenuProvider } from '../components/MenuContext';
 import { GoBackConfiguration } from './remote-control/GoBackConfiguration';
+import { AuthProvider } from '../context/AuthContext';
+import { Amplify } from 'aws-amplify';
+import awsconfig from '../aws-exports';
 
-import "./configureRemoteControl"
+// Configure Amplify
+Amplify.configure(awsconfig);
+
+import './configureRemoteControl';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -30,18 +36,20 @@ export default function RootLayout() {
     return null;
   }
 
-  
   return (
-    <MenuProvider>
-    <ThemeProvider value={DarkTheme}>
-    <GoBackConfiguration />
-      <Stack>
-        <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
-        <Stack.Screen name="+not-found" />
-        <Stack.Screen name="details" />
-        <Stack.Screen name="player" />
-      </Stack>
-    </ThemeProvider>
-    </MenuProvider>
+    <AuthProvider>
+      <MenuProvider>
+        <ThemeProvider value={DarkTheme}>
+          <GoBackConfiguration />
+          <Stack>
+            <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
+            <Stack.Screen name="+not-found" />
+            <Stack.Screen name="details" />
+            <Stack.Screen name="player" />
+            <Stack.Screen name="login" options={{ headerShown: false }} />
+          </Stack>
+        </ThemeProvider>
+      </MenuProvider>
+    </AuthProvider>
   );
 }
