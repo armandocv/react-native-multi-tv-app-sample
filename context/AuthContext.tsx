@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Auth } from 'aws-amplify';
+import { Amplify } from 'aws-amplify';
+import { signIn, signOut, getCurrentUser, fetchAuthSession } from 'aws-amplify/auth';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -33,20 +34,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const checkAuthState = async () => {
     try {
       setIsLoading(true);
-      const currentUser = await Auth.currentAuthenticatedUser();
+      const currentUser = await getCurrentUser();
 
       if (currentUser) {
         console.log('User authenticated:', currentUser.username);
         setIsAuthenticated(true);
         setUser({
           username: currentUser.username || 'User',
-          email: currentUser.attributes?.email || '',
+          // Note: In Amplify v6, user attributes are accessed differently
+          // You may need to fetch user attributes separately if needed
+          email: '',
         });
 
         // Verify we can get a valid token
         try {
-          const session = await Auth.currentSession();
-          const token = session.getIdToken().getJwtToken();
+          const session = await fetchAuthSession();
+          const token = session.tokens?.idToken?.toString();
           console.log('Valid token obtained');
         } catch (tokenError) {
           console.error('Error getting token:', tokenError);
@@ -68,7 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (username: string, password: string) => {
     try {
       setIsLoading(true);
-      await Auth.signIn(username, password);
+      await signIn({ username, password });
       await checkAuthState();
     } catch (error) {
       console.error('Error signing in:', error);
@@ -81,7 +84,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     try {
       setIsLoading(true);
-      await Auth.signOut();
+      await signOut();
       setIsAuthenticated(false);
       setUser(null);
     } catch (error) {

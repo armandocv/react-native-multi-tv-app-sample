@@ -1,6 +1,6 @@
 // services/GameService.ts
-import { API } from 'aws-amplify';
-import { Auth } from 'aws-amplify';
+import { get, post } from 'aws-amplify/api';
+import { fetchAuthSession } from 'aws-amplify/auth';
 
 export interface Game {
   sgId: string;
@@ -17,17 +17,22 @@ export interface Game {
 export const getGames = async (): Promise<Game[]> => {
   try {
     // Get current session to ensure we have a valid token
-    const session = await Auth.currentSession();
-    const token = session.getIdToken().getJwtToken();
+    const session = await fetchAuthSession();
+    const token = session.tokens?.idToken?.toString();
     
-    const response = await API.get('gamelift-api', '/games', {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': token
+    const response = await get({
+      apiName: 'gamelift-api',
+      path: '/games',
+      options: {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        }
       }
-    });
+    }).response;
     
-    const games = response as Game[];
+    const data = await response.body.json();
+    const games = data as Game[];
     
     // Sort games by ordering and name
     return games.sort((g1, g2) => {
@@ -57,8 +62,8 @@ export const createStreamSession = async (
 ): Promise<{ arn: string }> => {
   try {
     // Get current session to ensure we have a valid token
-    const session = await Auth.currentSession();
-    const token = session.getIdToken().getJwtToken();
+    const session = await fetchAuthSession();
+    const token = session.tokens?.idToken?.toString();
     
     const payload = {
       AppIdentifier: appId,
@@ -68,15 +73,20 @@ export const createStreamSession = async (
       Regions: regions
     };
 
-    const response = await API.post('gamelift-api', '/', {
-      body: payload,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': token
+    const response = await post({
+      apiName: 'gamelift-api',
+      path: '/',
+      options: {
+        body: payload,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        }
       }
-    });
+    }).response;
 
-    return response;
+    const data = await response.body.json();
+    return data;
   } catch (error) {
     console.error('Error creating stream session:', error);
     // Enhanced error logging
@@ -95,17 +105,22 @@ export const getSessionStatus = async (sgId: string, arn: string): Promise<{
 }> => {
   try {
     // Get current session to ensure we have a valid token
-    const session = await Auth.currentSession();
-    const token = session.getIdToken().getJwtToken();
+    const session = await fetchAuthSession();
+    const token = session.tokens?.idToken?.toString();
     
-    const response = await API.get('gamelift-api', `/session/${encodeURIComponent(sgId)}/${encodeURIComponent(arn)}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': token
+    const response = await get({
+      apiName: 'gamelift-api',
+      path: `/session/${encodeURIComponent(sgId)}/${encodeURIComponent(arn)}`,
+      options: {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token
+        }
       }
-    });
+    }).response;
 
-    return response;
+    const data = await response.body.json();
+    return data;
   } catch (error) {
     console.error('Error checking session status:', error);
     // Enhanced error logging

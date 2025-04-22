@@ -12,19 +12,19 @@ import awsconfig from '../aws-exports';
 
 // Configure Amplify with complete configuration
 Amplify.configure({
-  ...awsconfig,
   Auth: {
-    region: awsconfig.aws_cognito_region,
-    userPoolId: awsconfig.aws_user_pools_id,
-    userPoolWebClientId: awsconfig.aws_user_pools_web_client_id,
+    Cognito: {
+      region: awsconfig.aws_cognito_region,
+      userPoolId: awsconfig.aws_user_pools_id,
+      userPoolClientId: awsconfig.aws_user_pools_web_client_id,
+    },
   },
   API: {
-    endpoints: [
-      {
-        name: 'gamelift-api',
+    REST: {
+      'gamelift-api': {
         endpoint: awsconfig.API.REST['gamelift-api'].endpoint,
       },
-    ],
+    },
   },
 });
 
