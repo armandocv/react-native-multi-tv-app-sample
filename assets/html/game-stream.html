@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GameLift Stream</title>
+  <style>
+    body, html { 
+      margin: 0; 
+      padding: 0; 
+      width: 100%; 
+      height: 100%; 
+      overflow: hidden; 
+      background: #000; 
+    }
+    video, audio { 
+      width: 100%; 
+      height: 100%; 
+      object-fit: contain; 
+    }
+    .fullscreen-button { 
+      position: absolute; 
+      bottom: 20px; 
+      right: 20px; 
+      z-index: 1002;
+      color: white;
+      background: rgba(0,0,0,0.5);
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .status-overlay {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.5);
+      color: white;
+      padding: 5px 10px;
+      border-radius: 5px;
+      font-family: sans-serif;
+      font-size: 14px;
+      z-index: 1001;
+    }
+  </style>
+</head>
+<body>
+  <video id="StreamVideoElement" autoplay playsinline></video>
+  <audio id="StreamAudioElement" autoplay></audio>
+  <div id="statusOverlay" class="status-overlay">Initializing...</div>
+  <button id="fullscreenButton" class="fullscreen-button">Fullscreen</button>
+  
+  <script src="../websdk/gameliftstreams-1.0.0.js"></script>
+  <script>
+    // Will be populated by injected JavaScript from React Native
+    window.SESSION_DATA = {};
+    let gameliftstreams = null;
+    
+    document.addEventListener('DOMContentLoaded', function() {
+      // Update status
+      updateStatus('Waiting for session data...');
+      
+      // Setup fullscreen button
+      document.getElementById('fullscreenButton').addEventListener('click', function() {
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        } else {
+          document.documentElement.requestFullscreen();
+        }
+      });
+      
+      // Check if we have session data
+      if (window.SESSION_DATA && window.SESSION_DATA.signalResponse) {
+        initializeStream();
+      } else {
+        // If no session data yet, wait for it
+        updateStatus('No session data available. Waiting...');
+      }
+    });
+    
+    // Function to update status overlay
+    function updateStatus(message) {
+      document.getElementById('statusOverlay').innerText = message;
+      console.log('[GameLift Stream]', message);
+      
+      // Also send to React Native
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'STATUS_UPDATE',
+          message: message
+        }));
+      }
+    }
+    
+    // Initialize the GameLift Streams SDK
+    function initializeStream() {
+      updateStatus('Initializing GameLift Streams...');
+      
+      try {
+        // Create GameLift Streams instance
+        gameliftstreams = new gameliftstreamssdk.GameLiftStreams({
+          videoElement: document.getElementById('StreamVideoElement'),
+          audioElement: document.getElementById('StreamAudioElement'),
+          inputConfiguration: {
+            autoMouse: true,
+            autoKeyboard: true,
+            autoGamepad: true,
+            hapticFeedback: true,
+            setCursor: 'visibility',
+            autoPointerLock: 'fullscreen'
+          },
+          clientConnection: {
+            connectionState: handleConnectionState,
+            channelError: handleChannelError,
+            serverDisconnect: handleServerDisconnect
+          }
+        });
+        
+        // Set log level for debugging
+        gameliftstreamssdk.setLogLevel('debug');
+        
+        updateStatus('SDK initialized. Processing signal response...');
+        
+        // Process signal response from session
+        if (window.SESSION_DATA && window.SESSION_DATA.signalResponse) {
+          gameliftstreams.processSignalResponse(window.SESSION_DATA.signalResponse)
+            .then(() => {
+              updateStatus('Signal response processed. Attaching input...');
+              gameliftstreams.attachInput();
+              updateStatus('Stream ready!');
+              
+              // Hide status overlay after a few seconds
+              setTimeout(() => {
+                document.getElementById('statusOverlay').style.opacity = '0';
+              }, 3000);
+              
+              // Notify React Native
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'STREAM_READY'
+                }));
+              }
+            })
+            .catch(error => {
+              updateStatus('Error processing signal: ' + error.toString());
+              
+              // Notify React Native
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'STREAM_ERROR',
+                  error: error.toString()
+                }));
+              }
+            });
+        } else {
+          updateStatus('No signal response available');
+        }
+      } catch (error) {
+        updateStatus('Error initializing SDK: ' + error.toString());
+        
+        // Notify React Native
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'STREAM_ERROR',
+            error: error.toString()
+          }));
+        }
+      }
+    }
+    
+    // Generate signal request for session creation
+    function generateSignalRequest() {
+      try {
+        if (!gameliftstreams) {
+          // Create temporary instance for signal generation
+          gameliftstreams = new gameliftstreamssdk.GameLiftStreams({
+            videoElement: document.getElementById('StreamVideoElement'),
+            audioElement: document.getElementById('StreamAudioElement')
+          });
+        }
+        
+        gameliftstreams.generateSignalRequest()
+          .then(signalRequest => {
+            // Send signal request to React Native
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'SIGNAL_REQUEST',
+                signalRequest: signalRequest
+              }));
+            }
+          })
+          .catch(error => {
+            updateStatus('Error generating signal request: ' + error.toString());
+            
+            // Notify React Native
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'STREAM_ERROR',
+                error: error.toString()
+              }));
+            }
+          });
+      } catch (error) {
+        updateStatus('Error initializing SDK for signal request: ' + error.toString());
+        
+        // Notify React Native
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'STREAM_ERROR',
+            error: error.toString()
+          }));
+        }
+      }
+    }
+    
+    // Handle TV remote control input
+    function setupTVRemoteControls() {
+      document.addEventListener('keydown', function(event) {
+        // Map Fire TV remote buttons to appropriate inputs
+        switch(event.keyCode) {
+          case 37: // Left arrow
+            // Already handled by autoKeyboard
+            break;
+          case 38: // Up arrow
+            // Already handled by autoKeyboard
+            break;
+          case 39: // Right arrow
+            // Already handled by autoKeyboard
+            break;
+          case 40: // Down arrow
+            // Already handled by autoKeyboard
+            break;
+          case 13: // Enter/Select
+            // Already handled by autoKeyboard (Enter key)
+            break;
+          case 27: // Escape/Back
+            // Send message to React Native to handle back button
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'BACK_BUTTON_PRESSED'
+              }));
+            }
+            break;
+        }
+      });
+    }
+    
+    // Connection state callback
+    function handleConnectionState(state) {
+      updateStatus('Connection state: ' + state);
+      
+      // Notify React Native
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'CONNECTION_STATE',
+          state: state
+        }));
+      }
+      
+      if (state === 'disconnected') {
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'SESSION_ENDED'
+          }));
+        }
+      }
+    }
+    
+    // Channel error callback
+    function handleChannelError(error) {
+      updateStatus('WebRTC channel error: ' + error);
+      
+      // Notify React Native
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'CHANNEL_ERROR',
+          error: error.toString()
+        }));
+      }
+    }
+    
+    // Server disconnect callback
+    function handleServerDisconnect(reasonCode) {
+      updateStatus('Server disconnected: ' + reasonCode);
+      
+      // Notify React Native
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'SERVER_DISCONNECT',
+          reasonCode: reasonCode
+        }));
+      }
+      
+      if (reasonCode === 'terminated') {
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'SESSION_ENDED'
+          }));
+        }
+      }
+    }
+    
+    // Function to enable microphone input
+    function enableMicrophone() {
+      if (gameliftstreams) {
+        gameliftstreams.enableMicrophone()
+          .then(() => {
+            updateStatus('Microphone enabled');
+            
+            // Notify React Native
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'MICROPHONE_ENABLED'
+              }));
+            }
+          })
+          .catch(error => {
+            updateStatus('Error enabling microphone: ' + error.toString());
+            
+            // Notify React Native
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'STREAM_ERROR',
+                error: 'Failed to enable microphone: ' + error.toString()
+              }));
+            }
+          });
+      }
+    }
+    
+    // Function to close the connection
+    function closeConnection() {
+      if (gameliftstreams) {
+        gameliftstreams.close();
+        updateStatus('Connection closed');
+        
+        // Notify React Native
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'SESSION_ENDED'
+          }));
+        }
+      }
+    }
+    
+    // Expose functions to be called from React Native
+    window.streamFunctions = {
+      initializeStream: initializeStream,
+      generateSignalRequest: generateSignalRequest,
+      enableMicrophone: enableMicrophone,
+      closeConnection: closeConnection
+    };
+  </script>
+</body>
+</html>

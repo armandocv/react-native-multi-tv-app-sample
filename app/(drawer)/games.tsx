@@ -9,8 +9,8 @@ import { getGames, Game } from '../../services/GameService';
 // Fallback mock data in case API fails
 const FALLBACK_GAMES = [
   {
-    sgId: '1',
-    appId: 'app1',
+    sgId: 'sg-1234567890',
+    appId: 'app-1234567890',
     name: 'Space Explorer',
     description: 'Explore the vast universe in this epic space adventure',
     preview: 'space.jpg',
@@ -20,8 +20,8 @@ const FALLBACK_GAMES = [
     supportedInputs: ['Keyboard', 'Mouse', 'Controller'],
   },
   {
-    sgId: '2',
-    appId: 'app2',
+    sgId: 'sg-0987654321',
+    appId: 'app-0987654321',
     name: 'Racing Legends',
     description: 'High-speed racing with customizable vehicles',
     preview: 'racing.jpg',
@@ -29,6 +29,17 @@ const FALLBACK_GAMES = [
     regions: ['us-west-2'],
     staticTile: false,
     supportedInputs: ['Keyboard', 'Controller'],
+  },
+  {
+    sgId: 'sg-1122334455',
+    appId: 'app-1122334455',
+    name: 'Fantasy Quest',
+    description: 'Embark on an epic journey through a magical realm',
+    preview: 'fantasy.jpg',
+    ordering: 3,
+    regions: ['us-west-2'],
+    staticTile: false,
+    supportedInputs: ['Keyboard', 'Mouse', 'Controller'],
   },
 ];
 
@@ -91,7 +102,9 @@ export default function GamesScreen() {
   };
 
   const handleGameSelect = (game: Game) => {
-    // Navigate to game player with game details
+    // Navigate directly to game player with game details
+    // This is more TV-friendly than showing an Alert which might be hard to navigate with a remote
+    console.log(`Starting game: ${game.name}`);
     router.push({
       pathname: '/game-player',
       params: {
@@ -127,7 +140,7 @@ export default function GamesScreen() {
   return (
     <SpatialNavigationRoot>
       <View style={styles.container}>
-        <Text style={styles.title}>Games</Text>
+        <Text style={styles.title}>Cloud Gaming</Text>
         <Text style={styles.subtitle}>Select a game to play via GameLift Streams</Text>
 
         {games.length === 0 ? (
@@ -139,17 +152,28 @@ export default function GamesScreen() {
             contentContainerStyle={styles.gridContainer}
             keyExtractor={(item) => `${item.appId}|${item.sgId}`}
             renderItem={({ item }) => (
-              <SpatialNavigationFocusableView onSelect={() => handleGameSelect(item)}>
+              <SpatialNavigationFocusableView
+                onSelect={() => handleGameSelect(item)}
+                onFocus={() => console.log(`Focused game: ${item.name}`)}
+              >
                 {({ isFocused }) => (
                   <View style={[styles.gameCard, isFocused && styles.gameCardFocused]}>
                     <Image source={require('@/assets/images/logo.png')} style={styles.gameImage} />
                     <View style={styles.gameInfo}>
                       <Text style={[styles.gameTitle, isFocused && styles.gameTitleFocused]}>{item.name}</Text>
-                      <Text style={[styles.gameDescription, isFocused && styles.gameDescriptionFocused]}>
+                      <Text
+                        style={[styles.gameDescription, isFocused && styles.gameDescriptionFocused]}
+                        numberOfLines={2}
+                      >
                         {item.description}
                       </Text>
+                      <View style={styles.gameDetails}>
+                        <Text style={[styles.gameSupport, isFocused && styles.gameSupportFocused]}>
+                          Supports: {item.supportedInputs.join(', ')}
+                        </Text>
+                      </View>
                       {isFocused && (
-                        <View style={styles.playButton}>
+                        <View style={styles.playButton} onTouchEnd={() => handleGameSelect(item)}>
                           <Text style={styles.playButtonText}>PLAY NOW</Text>
                         </View>
                       )}
@@ -232,7 +256,7 @@ const useStyles = () => {
     gameInfo: {
       flex: 1,
       padding: scaledPixels(15),
-      justifyContent: 'center',
+      justifyContent: 'space-between',
     },
     gameTitle: {
       fontSize: scaledPixels(28),
@@ -246,9 +270,20 @@ const useStyles = () => {
     gameDescription: {
       fontSize: scaledPixels(18),
       color: '#cccccc',
+      marginBottom: scaledPixels(10),
     },
     gameDescriptionFocused: {
       color: 'white',
+    },
+    gameDetails: {
+      marginTop: scaledPixels(10),
+    },
+    gameSupport: {
+      fontSize: scaledPixels(14),
+      color: '#95a5a6',
+    },
+    gameSupportFocused: {
+      color: '#ecf0f1',
     },
     playButton: {
       backgroundColor: '#e74c3c',
