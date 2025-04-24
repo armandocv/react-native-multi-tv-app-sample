@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, forwardRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Platform, BackHandler, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
@@ -7,8 +7,9 @@ import { createStreamSession, getSessionStatus, terminateStreamSession, StreamSe
 import WebView from 'react-native-webview';
 import { SpatialNavigationRoot, SpatialNavigationFocusableView } from 'react-tv-space-navigation';
 import { Asset } from 'expo-asset';
+import * as FileSystem from 'expo-file-system';
 
-// HTML content for the streaming client
+// HTML content for the streaming client - optimized for TV platforms
 const HTML_CONTENT = `
 <!DOCTYPE html>
 <html>
@@ -29,6 +30,10 @@ const HTML_CONTENT = `
       width: 100%; 
       height: 100%; 
       object-fit: contain; 
+    }
+    /* Prevent Safari from drawing media controls over stream */
+    video::-webkit-media-controls {
+      display: none !important;
     }
     .fullscreen-button { 
       position: absolute; 
@@ -54,39 +59,49 @@ const HTML_CONTENT = `
       font-size: 14px;
       z-index: 1001;
     }
+    #streamFullscreenContainer:not(:fullscreen) > #streamFullscreenOverlay {
+      display: none;
+    }
+    #streamFullscreenContainer:fullscreen > #streamFullscreenOverlay {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 100;
+      pointer-events: none;
+    }
+    #streamFullscreenContainer:fullscreen > #streamVideoElement {
+      width: 100%;
+      height: 100%;
+    }
   </style>
 </head>
 <body>
-  <video id="StreamVideoElement" autoplay playsinline></video>
-  <audio id="StreamAudioElement" autoplay></audio>
+  <div id="streamFullscreenContainer">
+    <div id="streamFullscreenOverlay">&nbsp;</div>
+    <video id="streamVideoElement" autoplay playsinline disablepictureinpicture></video>
+    <audio id="streamAudioElement" autoplay></audio>
+  </div>
   <div id="statusOverlay" class="status-overlay">Initializing...</div>
   <button id="fullscreenButton" class="fullscreen-button">Fullscreen</button>
   
   <script>
     // Will be populated by injected JavaScript from React Native
     window.SESSION_DATA = {};
-    let gameliftstreams = null;
     
     document.addEventListener('DOMContentLoaded', function() {
       // Update status
-      updateStatus('Waiting for session data...');
+      updateStatus('Waiting for SDK initialization...');
       
       // Setup fullscreen button
       document.getElementById('fullscreenButton').addEventListener('click', function() {
         if (document.fullscreenElement) {
           document.exitFullscreen();
         } else {
-          document.documentElement.requestFullscreen();
+          document.getElementById('streamFullscreenContainer').requestFullscreen();
         }
       });
-      
-      // Check if we have session data
-      if (window.SESSION_DATA && window.SESSION_DATA.signalResponse) {
-        initializeStream();
-      } else {
-        // If no session data yet, wait for it
-        updateStatus('No session data available. Waiting...');
-      }
     });
     
     // Function to update status overlay
@@ -100,83 +115,6 @@ const HTML_CONTENT = `
           type: 'STATUS_UPDATE',
           message: message
         }));
-      }
-    }
-    
-    // Initialize the GameLift Streams SDK
-    function initializeStream() {
-      updateStatus('Initializing GameLift Streams...');
-      
-      try {
-        // In a real implementation, we would use the actual SDK
-        // For now, we'll simulate the streaming experience
-        updateStatus('SDK initialized. Processing signal response...');
-        
-        // Process signal response from session
-        if (window.SESSION_DATA && window.SESSION_DATA.signalResponse) {
-          // Simulate successful connection
-          setTimeout(() => {
-            updateStatus('Signal response processed. Attaching input...');
-            setTimeout(() => {
-              updateStatus('Stream ready!');
-              
-              // Hide status overlay after a few seconds
-              setTimeout(() => {
-                document.getElementById('statusOverlay').style.opacity = '0';
-              }, 3000);
-              
-              // Notify React Native
-              if (window.ReactNativeWebView) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                  type: 'STREAM_READY'
-                }));
-              }
-            }, 1000);
-          }, 1000);
-        } else {
-          updateStatus('No signal response available');
-        }
-      } catch (error) {
-        updateStatus('Error initializing SDK: ' + error.toString());
-        
-        // Notify React Native
-        if (window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'STREAM_ERROR',
-            error: error.toString()
-          }));
-        }
-      }
-    }
-    
-    // Generate signal request for session creation
-    function generateSignalRequest() {
-      try {
-        // In a real implementation, we would use the SDK
-        // For now, return a mock signal request
-        const mockSignalRequest = JSON.stringify({
-          type: 'offer',
-          sdp: 'mock-sdp-data',
-          webSdkVersion: '1.0.0'
-        });
-        
-        // Send signal request to React Native
-        if (window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'SIGNAL_REQUEST',
-            signalRequest: mockSignalRequest
-          }));
-        }
-      } catch (error) {
-        updateStatus('Error generating signal request: ' + error.toString());
-        
-        // Notify React Native
-        if (window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'STREAM_ERROR',
-            error: error.toString()
-          }));
-        }
       }
     }
     
@@ -211,46 +149,6 @@ const HTML_CONTENT = `
         }
       });
     }
-    
-    // Connection state callback
-    function handleConnectionState(state) {
-      updateStatus('Connection state: ' + state);
-      
-      // Notify React Native
-      if (window.ReactNativeWebView) {
-        window.ReactNativeWebView.postMessage(JSON.stringify({
-          type: 'CONNECTION_STATE',
-          state: state
-        }));
-      }
-      
-      if (state === 'disconnected') {
-        if (window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'SESSION_ENDED'
-          }));
-        }
-      }
-    }
-    
-    // Function to close the connection
-    function closeConnection() {
-      updateStatus('Connection closed');
-      
-      // Notify React Native
-      if (window.ReactNativeWebView) {
-        window.ReactNativeWebView.postMessage(JSON.stringify({
-          type: 'SESSION_ENDED'
-        }));
-      }
-    }
-    
-    // Expose functions to be called from React Native
-    window.streamFunctions = {
-      initializeStream: initializeStream,
-      generateSignalRequest: generateSignalRequest,
-      closeConnection: closeConnection
-    };
     
     // Setup TV remote controls
     setupTVRemoteControls();
@@ -333,45 +231,24 @@ export default function GamePlayerScreen() {
         signalResponse: '',
       });
 
-      // Generate a placeholder signal request for development
-      // In production, this would be generated by the GameLift Streams SDK
-      const signalRequest = JSON.stringify({
-        type: 'offer',
-        sdp: 'placeholder',
-        webSdkVersion: '1.0.0',
-      });
+      // Create a new stream session
+      const sessionResponse = await createStreamSession(
+        String(appId),
+        String(sgId),
+        '', // We'll generate the signal request from the WebView
+        parsedRegions,
+      );
 
-      // Create stream session
-      try {
-        const sessionResponse = await createStreamSession(String(appId), String(sgId), signalRequest, parsedRegions);
+      console.log('Stream session created:', sessionResponse);
 
-        setSessionState((prev) => ({
-          ...prev,
-          status: 'WAITING_FOR_SESSION',
-          sessionArn: sessionResponse.arn,
-        }));
+      setSessionState((prev) => ({
+        ...prev,
+        status: 'WAITING_FOR_SESSION',
+        sessionArn: sessionResponse.arn,
+      }));
 
-        // Poll for session status
-        await waitForSessionReady(String(sgId), sessionResponse.arn);
-      } catch (error) {
-        console.error('Error creating session:', error);
-
-        // For development, simulate a successful session
-        console.log('Using mock session data for development');
-        setTimeout(() => {
-          setSessionState({
-            status: 'ACTIVE',
-            sessionArn: 'mock-session-arn',
-            region: 'us-west-2',
-            error: '',
-            signalResponse: JSON.stringify({
-              type: 'answer',
-              sdp: 'mock-sdp',
-              webSdkProtocolUrl: 'https://example.com/sdk.js',
-            }),
-          });
-        }, 2000);
-      }
+      // Wait for the session to be ready
+      await waitForSessionReady(String(sgId), sessionResponse.arn);
     } catch (error) {
       console.error('Error starting game session:', error);
       setSessionState((prev) => ({
@@ -485,28 +362,47 @@ export default function GamePlayerScreen() {
   const handleWebViewMessage = (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
+      console.log('WebView message received:', data.type);
 
       switch (data.type) {
         case 'SIGNAL_REQUEST':
-          // Use the signal request to create a session
-          createStreamSession(String(appId), String(sgId), data.signalRequest, parsedRegions)
-            .then((sessionResponse) => {
-              setSessionState((prev) => ({
-                ...prev,
-                status: 'WAITING_FOR_SESSION',
-                sessionArn: sessionResponse.arn,
-              }));
+          console.log('Signal request received from WebView');
+          // Update the existing session with the signal request
+          if (sessionState.sessionArn) {
+            updateStreamSession(String(sgId), sessionState.sessionArn, data.signalRequest)
+              .then(() => {
+                console.log('Stream session updated with signal request');
+              })
+              .catch((error) => {
+                console.error('Error updating session with signal request:', error);
+                setSessionState((prev) => ({
+                  ...prev,
+                  status: 'ERROR',
+                  error: 'Failed to update session with signal request: ' + (error.message || 'Unknown error'),
+                }));
+              });
+          } else {
+            // Create a new session with the signal request if we don't have one yet
+            createStreamSession(String(appId), String(sgId), data.signalRequest, parsedRegions)
+              .then((sessionResponse) => {
+                console.log('Stream session created successfully:', sessionResponse);
+                setSessionState((prev) => ({
+                  ...prev,
+                  status: 'WAITING_FOR_SESSION',
+                  sessionArn: sessionResponse.arn,
+                }));
 
-              waitForSessionReady(String(sgId), sessionResponse.arn);
-            })
-            .catch((error) => {
-              console.error('Error creating session:', error);
-              setSessionState((prev) => ({
-                ...prev,
-                status: 'ERROR',
-                error: 'Failed to create game session: ' + (error.message || 'Unknown error'),
-              }));
-            });
+                waitForSessionReady(String(sgId), sessionResponse.arn);
+              })
+              .catch((error) => {
+                console.error('Error creating session:', error);
+                setSessionState((prev) => ({
+                  ...prev,
+                  status: 'ERROR',
+                  error: 'Failed to create game session: ' + (error.message || 'Unknown error'),
+                }));
+              });
+          }
           break;
 
         case 'STREAM_READY':
@@ -524,14 +420,24 @@ export default function GamePlayerScreen() {
           break;
 
         case 'SESSION_ENDED':
+          console.log('Session ended');
           handleCloseSession(true);
           break;
 
+        case 'SERVER_DISCONNECT':
+          console.log('Server disconnected with reason:', data.reason);
+          if (data.reason === 'terminated') {
+            handleCloseSession(true);
+          }
+          break;
+
         case 'CONNECTION_STATE':
+          console.log('Connection state changed:', data.state);
           setConnectionState(data.state);
           break;
 
         case 'BACK_BUTTON_PRESSED':
+          console.log('Back button pressed');
           handleBackButton();
           break;
 
@@ -587,13 +493,40 @@ export default function GamePlayerScreen() {
     );
   }
 
+  // Create a WebView with forwardRef to fix the ref warning
+  const CustomWebView = forwardRef((props, ref) => <WebView {...props} ref={ref} />);
+
+  // Prepare the SDK script for injection
+  const [sdkScript, setSdkScript] = useState('');
+
+  useEffect(() => {
+    async function loadSDKScript() {
+      try {
+        // Load the SDK script from the assets directory
+        const scriptPath = FileSystem.documentDirectory + 'gameliftstreams-1.0.0.js';
+        const assetModule = require('../assets/websdk/gameliftstreams-1.0.0.js');
+        const asset = Asset.fromModule(assetModule);
+        await asset.downloadAsync();
+
+        if (asset.localUri) {
+          const scriptContent = await FileSystem.readAsStringAsync(asset.localUri);
+          setSdkScript(scriptContent);
+        }
+      } catch (error) {
+        console.error('Failed to load SDK script:', error);
+      }
+    }
+
+    loadSDKScript();
+  }, []);
+
   return (
     <SpatialNavigationRoot>
       <View style={styles.container}>
         {!streamReady && <Text style={styles.title}>{name}</Text>}
 
-        {sessionState.status === 'ACTIVE' && (
-          <WebView
+        {sessionState.status === 'ACTIVE' ? (
+          <CustomWebView
             ref={webViewRef}
             source={{ html: HTML_CONTENT }}
             style={styles.gameContainer}
@@ -602,6 +535,7 @@ export default function GamePlayerScreen() {
             allowsInlineMediaPlayback={true}
             mediaPlaybackRequiresUserAction={false}
             startInLoadingState={true}
+            originWhitelist={['*']}
             renderLoading={() => (
               <View style={styles.webViewLoading}>
                 <ActivityIndicator size="large" color="#3498db" />
@@ -610,25 +544,144 @@ export default function GamePlayerScreen() {
             onMessage={handleWebViewMessage}
             // Pass session data to WebView
             injectedJavaScript={`
-              window.SESSION_DATA = {
-                sessionArn: "${sessionState.sessionArn}",
-                region: "${sessionState.region}",
-                appId: "${appId}",
-                sgId: "${sgId}",
-                signalResponse: ${JSON.stringify(sessionState.signalResponse)}
-              };
+              // Inject the GameLift Streams SDK directly
+              ${sdkScript}
               
-              // Initialize the stream once data is available
-              if (window.streamFunctions && window.streamFunctions.initializeStream) {
-                window.streamFunctions.initializeStream();
+              // Initialize the SDK after it's loaded
+              try {
+                console.log('Initializing GameLift Streams SDK');
+                
+                // Set log level for debugging
+                gameliftstreams.setLogLevel('debug');
+                
+                // Create GameLiftStreams instance
+                const gameStreams = new gameliftstreams.GameLiftStreams({
+                  videoElement: document.getElementById('streamVideoElement'),
+                  audioElement: document.getElementById('streamAudioElement'),
+                  inputConfiguration: {
+                    autoMouse: true,
+                    autoKeyboard: true,
+                    autoGamepad: true,
+                    hapticFeedback: true,
+                    setCursor: 'visibility',
+                    autoPointerLock: 'fullscreen',
+                  },
+                  clientConnection: {
+                    connectionState: function(state) {
+                      console.log('Connection state:', state);
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'CONNECTION_STATE',
+                        state: state
+                      }));
+                      
+                      if (state === 'disconnected') {
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'SESSION_ENDED'
+                        }));
+                      }
+                    },
+                    channelError: function(error) {
+                      console.error('Channel error:', error);
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'STREAM_ERROR',
+                        error: 'WebRTC connection error: ' + error
+                      }));
+                    },
+                    serverDisconnect: function(reason) {
+                      console.log('Server disconnected:', reason);
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'SERVER_DISCONNECT',
+                        reason: reason
+                      }));
+                    },
+                    applicationMessage: function(message) {
+                      console.log('Application message received, length:', message.length);
+                    }
+                  }
+                });
+                
+                // Store the instance globally
+                window.myGameLiftStreams = gameStreams;
+                
+                // Generate signal request
+                gameStreams.generateSignalRequest()
+                  .then(function(signalRequest) {
+                    console.log('Signal request generated successfully');
+                    
+                    // Send the signal request to React Native
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: 'SIGNAL_REQUEST',
+                      signalRequest: signalRequest
+                    }));
+                  })
+                  .catch(function(error) {
+                    console.error('Error generating signal request:', error);
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: 'STREAM_ERROR',
+                      error: 'Failed to generate signal request: ' + error.toString()
+                    }));
+                  });
+                
+                // Set session data
+                window.SESSION_DATA = {
+                  sessionArn: "${sessionState.sessionArn}",
+                  region: "${sessionState.region}",
+                  appId: "${appId}",
+                  sgId: "${sgId}",
+                  signalResponse: ${JSON.stringify(sessionState.signalResponse)}
+                };
+                
+                // Process signal response if available
+                if (window.SESSION_DATA && window.SESSION_DATA.signalResponse) {
+                  try {
+                    const signalResponse = window.SESSION_DATA.signalResponse;
+                    gameStreams.processSignalResponse(signalResponse)
+                      .then(function() {
+                        console.log('Signal response processed successfully');
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'STREAM_READY'
+                        }));
+                      })
+                      .catch(function(error) {
+                        console.error('Error processing signal response:', error);
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'STREAM_ERROR',
+                          error: 'Failed to process signal response: ' + error.toString()
+                        }));
+                      });
+                  } catch (error) {
+                    console.error('Error processing signal response:', error);
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: 'STREAM_ERROR',
+                      error: 'Failed to process signal response: ' + error.toString()
+                    }));
+                  }
+                }
+              } catch (error) {
+                console.error('Error initializing SDK:', error);
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'STREAM_ERROR',
+                  error: 'Failed to initialize SDK: ' + error.toString()
+                }));
               }
               
               true;
             `}
           />
+        ) : (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#3498db" />
+            <Text style={styles.loadingText}>
+              {sessionState.status === 'CREATING_SESSION'
+                ? 'Initializing game session...'
+                : sessionState.status === 'WAITING_FOR_SESSION'
+                  ? 'Waiting for session to be ready...'
+                  : 'Preparing stream...'}
+            </Text>
+          </View>
         )}
 
-        {!streamReady && (
+        {!streamReady && sessionState.status === 'ACTIVE' && (
           <SpatialNavigationFocusableView onSelect={() => handleCloseSession()}>
             {({ isFocused }) => (
               <Text style={[styles.exitText, isFocused && styles.focusedText]}>Press to exit game</Text>
