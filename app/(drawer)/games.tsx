@@ -75,12 +75,16 @@ export default function GamesScreen() {
       try {
         fetchedGames = await getGames();
         console.log('Successfully fetched games:', fetchedGames.length);
+        // Print the full JSON object with the list of games
+        console.log('Games data:', JSON.stringify(fetchedGames, null, 2));
       } catch (err) {
         console.warn('Failed to fetch games from API, using fallback data:', err);
         Alert.alert('API Error', 'Failed to fetch games from the server. Using fallback data instead.', [
           { text: 'OK' },
         ]);
         fetchedGames = FALLBACK_GAMES;
+        // Print the fallback games data as well
+        console.log('Fallback games data:', JSON.stringify(fetchedGames, null, 2));
       }
 
       // Filter games by selected regions
