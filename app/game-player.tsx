@@ -223,11 +223,21 @@ export default function GamePlayerScreen() {
 
   useEffect(() => {
     if (isAuthenticated && appId && sgId) {
-      startGameSession();
+      // Don't start the session immediately
+      // We'll wait for the WebView to generate the signal request first
+      setSessionState({
+        status: 'INITIALIZING',
+        sessionArn: '',
+        region: '',
+        error: '',
+        signalResponse: '',
+      });
     }
   }, [isAuthenticated, appId, sgId]);
 
-  const startGameSession = async () => {
+  // We'll no longer use this function directly
+  // Instead, we'll wait for the WebView to generate the signal request first
+  const startGameSession = async (signalRequest: string) => {
     try {
       setSessionState({
         status: 'CREATING_SESSION',
@@ -237,11 +247,13 @@ export default function GamePlayerScreen() {
         signalResponse: '',
       });
 
-      // Create a new stream session
+      console.log(`Starting game session for app ${appId}, group ${sgId} in regions: ${parsedRegions.join(', ')}`);
+
+      // Create a new stream session with the signal request
       const sessionResponse = await createStreamSession(
         String(appId),
         String(sgId),
-        '', // We'll generate the signal request from the WebView
+        signalRequest, // Use the provided signal request
         parsedRegions,
       );
 
@@ -267,10 +279,12 @@ export default function GamePlayerScreen() {
 
   const waitForSessionReady = async (sgId: string, arn: string, timeoutMs: number = 60000) => {
     const startTime = Date.now();
+    console.log(`Waiting for session ${arn} to be ready (timeout: ${timeoutMs}ms)`);
 
     while (Date.now() - startTime < timeoutMs) {
       try {
         const sessionData = await getSessionStatus(sgId, arn);
+        console.log(`Session status: ${sessionData.status}`);
 
         if (sessionData.status === 'ACTIVE') {
           console.log('Session is active, signal response available:', !!sessionData.signalResponse);
@@ -282,6 +296,41 @@ export default function GamePlayerScreen() {
             region: sessionData.region || '',
             signalResponse: sessionData.signalResponse || '',
           }));
+
+          // If we have a WebView reference and signal response, process it immediately
+          if (webViewRef.current && sessionData.signalResponse) {
+            console.log('Processing signal response from session data');
+            webViewRef.current.injectJavaScript(`
+              try {
+                if (window.myGameLiftStreams) {
+                  console.log('Processing signal response from session data');
+                  window.myGameLiftStreams.processSignalResponse(${JSON.stringify(sessionData.signalResponse)})
+                    .then(function() {
+                      console.log('Signal response processed successfully');
+                      window.myGameLiftStreams.attachInput();
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'STREAM_READY'
+                      }));
+                    })
+                    .catch(function(error) {
+                      console.error('Error processing signal response:', error);
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'STREAM_ERROR',
+                        error: 'Failed to process signal response: ' + error.toString()
+                      }));
+                    });
+                }
+              } catch (error) {
+                console.error('Error processing signal response:', error);
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'STREAM_ERROR',
+                  error: 'Failed to process signal response: ' + error.toString()
+                }));
+              }
+              true;
+            `);
+          }
+
           return;
         }
 
@@ -299,6 +348,7 @@ export default function GamePlayerScreen() {
     }
 
     // Timeout reached
+    console.error('Timeout waiting for session to be ready');
     setPollingTimeout(true);
     setSessionState((prev) => ({
       ...prev,
@@ -375,15 +425,20 @@ export default function GamePlayerScreen() {
       switch (data.type) {
         case 'SIGNAL_REQUEST':
           console.log('Signal request received from WebView');
-          // Update the existing session with the signal request
-          if (sessionState.sessionArn) {
+          // Create a new session with the signal request
+          if (!sessionState.sessionArn) {
+            console.log('Creating new session with signal request from WebView');
+            startGameSession(data.signalRequest);
+          } else {
             // For existing sessions, we need to update with the signal request
+            console.log('Updating existing session with signal request');
             updateStreamSession(String(sgId), sessionState.sessionArn, data.signalRequest)
               .then((response) => {
                 console.log('Stream session updated with signal request:', response);
 
                 // If the session is already active, we need to pass the signal response back to the WebView
                 if (sessionState.status === 'ACTIVE' && response.signalResponse) {
+                  console.log('Session is active, processing signal response');
                   webViewRef.current?.injectJavaScript(`
                     try {
                       if (window.myGameLiftStreams) {
@@ -421,27 +476,6 @@ export default function GamePlayerScreen() {
                   ...prev,
                   status: 'ERROR',
                   error: 'Failed to update session with signal request: ' + (error.message || 'Unknown error'),
-                }));
-              });
-          } else {
-            // Create a new session with the signal request if we don't have one yet
-            createStreamSession(String(appId), String(sgId), data.signalRequest, parsedRegions)
-              .then((sessionResponse) => {
-                console.log('Stream session created successfully:', sessionResponse);
-                setSessionState((prev) => ({
-                  ...prev,
-                  status: 'WAITING_FOR_SESSION',
-                  sessionArn: sessionResponse.arn,
-                }));
-
-                waitForSessionReady(String(sgId), sessionResponse.arn);
-              })
-              .catch((error) => {
-                console.error('Error creating session:', error);
-                setSessionState((prev) => ({
-                  ...prev,
-                  status: 'ERROR',
-                  error: 'Failed to create game session: ' + (error.message || 'Unknown error'),
                 }));
               });
           }
@@ -526,7 +560,17 @@ export default function GamePlayerScreen() {
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{sessionState.error}</Text>
           {pollingTimeout && (
-            <SpatialNavigationFocusableView onSelect={() => startGameSession()}>
+            <SpatialNavigationFocusableView
+              onSelect={() =>
+                setSessionState({
+                  status: 'INITIALIZING',
+                  sessionArn: '',
+                  region: '',
+                  error: '',
+                  signalResponse: '',
+                })
+              }
+            >
               {({ isFocused }) => <Text style={[styles.retryText, isFocused && styles.focusedText]}>Retry</Text>}
             </SpatialNavigationFocusableView>
           )}
@@ -543,6 +587,7 @@ export default function GamePlayerScreen() {
 
   // Prepare the SDK script for injection
   const [sdkScript, setSdkScript] = useState('');
+  const [sdkLoaded, setSdkLoaded] = useState(false);
 
   useEffect(() => {
     async function loadSDKScript() {
@@ -556,9 +601,16 @@ export default function GamePlayerScreen() {
         if (asset.localUri) {
           const scriptContent = await FileSystem.readAsStringAsync(asset.localUri);
           setSdkScript(scriptContent);
+          setSdkLoaded(true);
+          console.log('GameLift Streams SDK loaded successfully');
         }
       } catch (error) {
         console.error('Failed to load SDK script:', error);
+        setSessionState((prev) => ({
+          ...prev,
+          status: 'ERROR',
+          error: 'Failed to load GameLift Streams SDK: ' + (error.message || 'Unknown error'),
+        }));
       }
     }
 
@@ -570,7 +622,7 @@ export default function GamePlayerScreen() {
       <View style={styles.container}>
         {!streamReady && <Text style={styles.title}>{name}</Text>}
 
-        {sessionState.status === 'ACTIVE' ? (
+        {sessionState.status === 'ACTIVE' && sdkLoaded ? (
           <CustomWebView
             ref={webViewRef}
             source={{ html: HTML_CONTENT }}
@@ -584,6 +636,7 @@ export default function GamePlayerScreen() {
             renderLoading={() => (
               <View style={styles.webViewLoading}>
                 <ActivityIndicator size="large" color="#3498db" />
+                <Text style={styles.loadingText}>Initializing game stream...</Text>
               </View>
             )}
             onMessage={handleWebViewMessage}
@@ -740,7 +793,9 @@ export default function GamePlayerScreen() {
                 ? 'Initializing game session...'
                 : sessionState.status === 'WAITING_FOR_SESSION'
                   ? 'Waiting for session to be ready...'
-                  : 'Preparing stream...'}
+                  : !sdkLoaded
+                    ? 'Loading GameLift Streams SDK...'
+                    : 'Preparing stream...'}
             </Text>
           </View>
         )}

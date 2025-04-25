@@ -87,13 +87,20 @@ export const createStreamSession = async (
     
     console.log(`Creating stream session for app ${appId}, group ${sgId} in regions: ${regions.join(', ')}`);
     
+    // Ensure signalRequest is not null or empty
+    if (!signalRequest) {
+      throw new Error('SignalRequest cannot be null or empty');
+    }
+    
     const payload = {
       AppIdentifier: appId,
       SGIdentifier: sgId,
       UserId: 'DefaultUser', // In production, use actual user ID
-      SignalRequest: signalRequest || null, // Allow empty signal request for initial creation
+      SignalRequest: signalRequest,
       Regions: regions
     };
+
+    console.log('Sending request to create stream session');
 
     const response = await post({
       apiName: 'gamelift-api',
@@ -148,6 +155,12 @@ export const getSessionStatus = async (sgId: string, arn: string): Promise<Strea
 
     const data = await response.body.json();
     console.log('Session status:', data);
+    
+    // If the session is active and has a signal response, log it for debugging
+    if (data.status === 'ACTIVE' && data.signalResponse) {
+      console.log('Active session with signal response available');
+    }
+    
     return data;
   } catch (error) {
     console.error('Error checking session status:', error);

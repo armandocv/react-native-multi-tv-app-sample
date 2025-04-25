@@ -105,6 +105,10 @@ export default function GamesScreen() {
     // Navigate directly to game player with game details
     // This is more TV-friendly than showing an Alert which might be hard to navigate with a remote
     console.log(`Starting game: ${game.name}`);
+
+    // Show loading indicator or feedback to user
+    Alert.alert('Starting Game', `Launching ${game.name}. Please wait...`, [{ text: 'OK' }]);
+
     router.push({
       pathname: '/game-player',
       params: {
