@@ -171,7 +171,7 @@ export const updateStreamSession = async (
   sgId: string,
   arn: string,
   signalRequest: string
-): Promise<any> => {
+): Promise<StreamSession> => {
   try {
     // Get current session to ensure we have a valid token
     const session = await fetchAuthSession();
@@ -205,6 +205,7 @@ export const updateStreamSession = async (
     throw error;
   }
 };
+
 /**
  * Terminates an active stream session
  * 

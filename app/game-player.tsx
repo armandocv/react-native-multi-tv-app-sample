@@ -3,7 +3,13 @@ import { View, Text, StyleSheet, ActivityIndicator, Platform, BackHandler, Alert
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { scaledPixels } from '@/hooks/useScale';
-import { createStreamSession, getSessionStatus, terminateStreamSession, StreamSession } from '../services/GameService';
+import {
+  createStreamSession,
+  getSessionStatus,
+  terminateStreamSession,
+  updateStreamSession,
+  StreamSession,
+} from '../services/GameService';
 import WebView from 'react-native-webview';
 import { SpatialNavigationRoot, SpatialNavigationFocusableView } from 'react-tv-space-navigation';
 import { Asset } from 'expo-asset';
@@ -267,6 +273,8 @@ export default function GamePlayerScreen() {
         const sessionData = await getSessionStatus(sgId, arn);
 
         if (sessionData.status === 'ACTIVE') {
+          console.log('Session is active, signal response available:', !!sessionData.signalResponse);
+
           setSessionState((prev) => ({
             ...prev,
             status: 'ACTIVE',
@@ -369,9 +377,43 @@ export default function GamePlayerScreen() {
           console.log('Signal request received from WebView');
           // Update the existing session with the signal request
           if (sessionState.sessionArn) {
+            // For existing sessions, we need to update with the signal request
             updateStreamSession(String(sgId), sessionState.sessionArn, data.signalRequest)
-              .then(() => {
-                console.log('Stream session updated with signal request');
+              .then((response) => {
+                console.log('Stream session updated with signal request:', response);
+
+                // If the session is already active, we need to pass the signal response back to the WebView
+                if (sessionState.status === 'ACTIVE' && response.signalResponse) {
+                  webViewRef.current?.injectJavaScript(`
+                    try {
+                      if (window.myGameLiftStreams) {
+                        console.log('Processing signal response after update');
+                        window.myGameLiftStreams.processSignalResponse(${JSON.stringify(response.signalResponse)})
+                          .then(function() {
+                            console.log('Signal response processed successfully');
+                            window.myGameLiftStreams.attachInput();
+                            window.ReactNativeWebView.postMessage(JSON.stringify({
+                              type: 'STREAM_READY'
+                            }));
+                          })
+                          .catch(function(error) {
+                            console.error('Error processing signal response:', error);
+                            window.ReactNativeWebView.postMessage(JSON.stringify({
+                              type: 'STREAM_ERROR',
+                              error: 'Failed to process signal response: ' + error.toString()
+                            }));
+                          });
+                      }
+                    } catch (error) {
+                      console.error('Error processing signal response:', error);
+                      window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'STREAM_ERROR',
+                        error: 'Failed to process signal response: ' + error.toString()
+                      }));
+                    }
+                    true;
+                  `);
+                }
               })
               .catch((error) => {
                 console.error('Error updating session with signal request:', error);
@@ -434,6 +476,9 @@ export default function GamePlayerScreen() {
         case 'CONNECTION_STATE':
           console.log('Connection state changed:', data.state);
           setConnectionState(data.state);
+          if (data.state === 'disconnected') {
+            handleCloseSession(true);
+          }
           break;
 
         case 'BACK_BUTTON_PRESSED':
@@ -569,6 +614,7 @@ export default function GamePlayerScreen() {
                   clientConnection: {
                     connectionState: function(state) {
                       console.log('Connection state:', state);
+                      updateStatus('Connection state: ' + state);
                       window.ReactNativeWebView.postMessage(JSON.stringify({
                         type: 'CONNECTION_STATE',
                         state: state
@@ -582,6 +628,7 @@ export default function GamePlayerScreen() {
                     },
                     channelError: function(error) {
                       console.error('Channel error:', error);
+                      updateStatus('Channel error: ' + error);
                       window.ReactNativeWebView.postMessage(JSON.stringify({
                         type: 'STREAM_ERROR',
                         error: 'WebRTC connection error: ' + error
@@ -589,6 +636,7 @@ export default function GamePlayerScreen() {
                     },
                     serverDisconnect: function(reason) {
                       console.log('Server disconnected:', reason);
+                      updateStatus('Server disconnected: ' + reason);
                       window.ReactNativeWebView.postMessage(JSON.stringify({
                         type: 'SERVER_DISCONNECT',
                         reason: reason
@@ -607,6 +655,7 @@ export default function GamePlayerScreen() {
                 gameStreams.generateSignalRequest()
                   .then(function(signalRequest) {
                     console.log('Signal request generated successfully');
+                    updateStatus('Signal request generated, connecting to stream...');
                     
                     // Send the signal request to React Native
                     window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -616,6 +665,7 @@ export default function GamePlayerScreen() {
                   })
                   .catch(function(error) {
                     console.error('Error generating signal request:', error);
+                    updateStatus('Error generating signal request: ' + error.toString());
                     window.ReactNativeWebView.postMessage(JSON.stringify({
                       type: 'STREAM_ERROR',
                       error: 'Failed to generate signal request: ' + error.toString()
@@ -635,15 +685,25 @@ export default function GamePlayerScreen() {
                 if (window.SESSION_DATA && window.SESSION_DATA.signalResponse) {
                   try {
                     const signalResponse = window.SESSION_DATA.signalResponse;
+                    console.log('Processing signal response from session data');
+                    updateStatus('Processing signal response...');
+                    
                     gameStreams.processSignalResponse(signalResponse)
                       .then(function() {
                         console.log('Signal response processed successfully');
+                        updateStatus('Stream connected successfully');
+                        
+                        // Attach input after successful connection
+                        gameStreams.attachInput();
+                        
                         window.ReactNativeWebView.postMessage(JSON.stringify({
                           type: 'STREAM_READY'
                         }));
                       })
                       .catch(function(error) {
                         console.error('Error processing signal response:', error);
+                        updateStatus('Failed to process signal response: ' + error.toString());
+                        
                         window.ReactNativeWebView.postMessage(JSON.stringify({
                           type: 'STREAM_ERROR',
                           error: 'Failed to process signal response: ' + error.toString()
@@ -651,6 +711,8 @@ export default function GamePlayerScreen() {
                       });
                   } catch (error) {
                     console.error('Error processing signal response:', error);
+                    updateStatus('Error processing signal response: ' + error.toString());
+                    
                     window.ReactNativeWebView.postMessage(JSON.stringify({
                       type: 'STREAM_ERROR',
                       error: 'Failed to process signal response: ' + error.toString()
@@ -659,6 +721,8 @@ export default function GamePlayerScreen() {
                 }
               } catch (error) {
                 console.error('Error initializing SDK:', error);
+                updateStatus('Error initializing SDK: ' + error.toString());
+                
                 window.ReactNativeWebView.postMessage(JSON.stringify({
                   type: 'STREAM_ERROR',
                   error: 'Failed to initialize SDK: ' + error.toString()
