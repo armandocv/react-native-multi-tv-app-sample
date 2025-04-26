@@ -105,24 +105,51 @@ export default function GamesScreen() {
     }
   };
 
-  const handleGameSelect = (game: Game) => {
+  const handleGameSelect = async (game: Game) => {
     // Navigate directly to game player with game details
     // This is more TV-friendly than showing an Alert which might be hard to navigate with a remote
     console.log(`Starting game: ${game.name}`);
 
-    // Show loading indicator or feedback to user
-    Alert.alert('Starting Game', `Launching ${game.name}. Please wait...`, [{ text: 'OK' }]);
+    try {
+      // Show loading indicator or feedback to user
+      Alert.alert('Starting Game', `Launching ${game.name}. Please wait...`, [{ text: 'OK' }]);
 
-    router.push({
-      pathname: '/game-player',
-      params: {
+      // Log the game details and regions
+      console.log('Game details:', {
+        appId: game.appId,
+        sgId: game.sgId,
+        name: game.name,
+        regions: selectedRegions,
+      });
+
+      // Note: We don't need to call createStreamSession here directly
+      // The game-player.tsx component will handle the API call when it loads
+      // This is because we need to generate a signal request from the WebRTC SDK first
+      // which happens in the WebView inside game-player.tsx
+
+      // Navigate to the game player with the game details
+      router.push({
+        pathname: '/game-player',
+        params: {
+          id: `${game.appId}|${game.sgId}`,
+          appId: game.appId,
+          sgId: game.sgId,
+          name: game.name,
+          regions: JSON.stringify(selectedRegions),
+        },
+      });
+
+      console.log('Navigation to game-player initiated with params:', {
         id: `${game.appId}|${game.sgId}`,
         appId: game.appId,
         sgId: game.sgId,
         name: game.name,
         regions: JSON.stringify(selectedRegions),
-      },
-    });
+      });
+    } catch (error) {
+      console.error('Error starting game:', error);
+      Alert.alert('Error', `Failed to start ${game.name}. Please try again.`, [{ text: 'OK' }]);
+    }
   };
 
   if (isLoading || loading) {

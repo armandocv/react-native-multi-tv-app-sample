@@ -97,6 +97,9 @@ const HTML_CONTENT = `
     window.SESSION_DATA = {};
     
     document.addEventListener('DOMContentLoaded', function() {
+      // Log that the DOM is loaded
+      console.log('DOM content loaded');
+      
       // Update status
       updateStatus('Waiting for SDK initialization...');
       
@@ -108,6 +111,16 @@ const HTML_CONTENT = `
           document.getElementById('streamFullscreenContainer').requestFullscreen();
         }
       });
+      
+      // Check if ReactNativeWebView is available
+      if (window.ReactNativeWebView) {
+        console.log('ReactNativeWebView is available on DOMContentLoaded');
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'DOM_LOADED'
+        }));
+      } else {
+        console.error('ReactNativeWebView is NOT available on DOMContentLoaded');
+      }
     });
     
     // Function to update status overlay
@@ -158,6 +171,17 @@ const HTML_CONTENT = `
     
     // Setup TV remote controls
     setupTVRemoteControls();
+    
+    // Send a ready message to React Native
+    console.log('HTML script executed, checking ReactNativeWebView');
+    if (window.ReactNativeWebView) {
+      console.log('ReactNativeWebView is available in script');
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: 'HTML_LOADED'
+      }));
+    } else {
+      console.error('ReactNativeWebView is NOT available in script');
+    }
   </script>
 </body>
 </html>
@@ -223,8 +247,7 @@ export default function GamePlayerScreen() {
 
   useEffect(() => {
     if (isAuthenticated && appId && sgId) {
-      // Don't start the session immediately
-      // We'll wait for the WebView to generate the signal request first
+      // Initialize the session state
       setSessionState({
         status: 'INITIALIZING',
         sessionArn: '',
@@ -232,6 +255,10 @@ export default function GamePlayerScreen() {
         error: '',
         signalResponse: '',
       });
+
+      // For debugging purposes, let's log that we're in this effect
+      console.log('Authentication confirmed, appId and sgId available:', { appId, sgId });
+      console.log('Waiting for WebView to initialize and generate signal request...');
     }
   }, [isAuthenticated, appId, sgId]);
 
@@ -248,25 +275,54 @@ export default function GamePlayerScreen() {
       });
 
       console.log(`Starting game session for app ${appId}, group ${sgId} in regions: ${parsedRegions.join(', ')}`);
+      console.log('Signal request length:', signalRequest ? signalRequest.length : 0);
 
-      // Create a new stream session with the signal request
-      const sessionResponse = await createStreamSession(
-        String(appId),
-        String(sgId),
-        signalRequest, // Use the provided signal request
-        parsedRegions,
-      );
+      // Create a mock response for testing if needed
+      // const mockResponse = {
+      //   arn: 'mock-arn-123',
+      //   region: 'us-west-2',
+      //   status: 'ACTIVE',
+      //   signalResponse: '{"mock":"response"}'
+      // };
 
-      console.log('Stream session created:', sessionResponse);
+      try {
+        // Create a new stream session with the signal request
+        console.log('Calling createStreamSession API...');
+        const sessionResponse = await createStreamSession(
+          String(appId),
+          String(sgId),
+          signalRequest, // Use the provided signal request
+          parsedRegions,
+        );
 
-      setSessionState((prev) => ({
-        ...prev,
-        status: 'WAITING_FOR_SESSION',
-        sessionArn: sessionResponse.arn,
-      }));
+        console.log('Stream session created - Full response:', JSON.stringify(sessionResponse));
 
-      // Wait for the session to be ready
-      await waitForSessionReady(String(sgId), sessionResponse.arn);
+        setSessionState((prev) => ({
+          ...prev,
+          status: 'WAITING_FOR_SESSION',
+          sessionArn: sessionResponse.arn,
+        }));
+
+        // Wait for the session to be ready
+        await waitForSessionReady(String(sgId), sessionResponse.arn);
+      } catch (apiError) {
+        console.error('API Error starting game session:', apiError);
+
+        // Check if it's a network error
+        if (apiError.message && apiError.message.includes('Network request failed')) {
+          setSessionState((prev) => ({
+            ...prev,
+            status: 'ERROR',
+            error: 'Network error: Unable to connect to the API. Please check your internet connection.',
+          }));
+        } else {
+          setSessionState((prev) => ({
+            ...prev,
+            status: 'ERROR',
+            error: 'API Error: ' + (apiError.message || 'Unknown API error'),
+          }));
+        }
+      }
     } catch (error) {
       console.error('Error starting game session:', error);
       setSessionState((prev) => ({
@@ -285,6 +341,7 @@ export default function GamePlayerScreen() {
       try {
         const sessionData = await getSessionStatus(sgId, arn);
         console.log(`Session status: ${sessionData.status}`);
+        console.log('Session data:', JSON.stringify(sessionData));
 
         if (sessionData.status === 'ACTIVE') {
           console.log('Session is active, signal response available:', !!sessionData.signalResponse);
@@ -423,18 +480,38 @@ export default function GamePlayerScreen() {
       console.log('WebView message received:', data.type);
 
       switch (data.type) {
+        case 'HTML_LOADED':
+          console.log('HTML content loaded in WebView');
+          break;
+
+        case 'DOM_LOADED':
+          console.log('DOM content loaded in WebView');
+          break;
+
         case 'SIGNAL_REQUEST':
           console.log('Signal request received from WebView');
+          console.log('Signal request length:', data.signalRequest ? data.signalRequest.length : 0);
+
           // Create a new session with the signal request
           if (!sessionState.sessionArn) {
             console.log('Creating new session with signal request from WebView');
+            // Make sure signalRequest is not undefined or empty
+            if (!data.signalRequest) {
+              console.error('Signal request is empty or undefined');
+              setSessionState((prev) => ({
+                ...prev,
+                status: 'ERROR',
+                error: 'Signal request is empty or undefined',
+              }));
+              return;
+            }
             startGameSession(data.signalRequest);
           } else {
             // For existing sessions, we need to update with the signal request
             console.log('Updating existing session with signal request');
             updateStreamSession(String(sgId), sessionState.sessionArn, data.signalRequest)
               .then((response) => {
-                console.log('Stream session updated with signal request:', response);
+                console.log('Stream session updated with signal request:', JSON.stringify(response));
 
                 // If the session is already active, we need to pass the signal response back to the WebView
                 if (sessionState.status === 'ACTIVE' && response.signalResponse) {
@@ -559,21 +636,38 @@ export default function GamePlayerScreen() {
       <SpatialNavigationRoot>
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{sessionState.error}</Text>
-          {pollingTimeout && (
-            <SpatialNavigationFocusableView
-              onSelect={() =>
-                setSessionState({
-                  status: 'INITIALIZING',
-                  sessionArn: '',
-                  region: '',
-                  error: '',
-                  signalResponse: '',
-                })
+          <SpatialNavigationFocusableView
+            onSelect={() => {
+              console.log('Retrying...');
+              setSessionState({
+                status: 'INITIALIZING',
+                sessionArn: '',
+                region: '',
+                error: '',
+                signalResponse: '',
+              });
+              setSdkLoaded(false);
+              // Force reload the SDK
+              async function reloadSDK() {
+                try {
+                  const assetModule = require('../assets/websdk/gameliftstreams-1.0.0.js');
+                  const asset = Asset.fromModule(assetModule);
+                  await asset.downloadAsync();
+                  if (asset.localUri) {
+                    const scriptContent = await FileSystem.readAsStringAsync(asset.localUri);
+                    setSdkScript(scriptContent);
+                    setSdkLoaded(true);
+                    console.log('GameLift Streams SDK reloaded successfully');
+                  }
+                } catch (error) {
+                  console.error('Failed to reload SDK:', error);
+                }
               }
-            >
-              {({ isFocused }) => <Text style={[styles.retryText, isFocused && styles.focusedText]}>Retry</Text>}
-            </SpatialNavigationFocusableView>
-          )}
+              reloadSDK();
+            }}
+          >
+            {({ isFocused }) => <Text style={[styles.retryText, isFocused && styles.focusedText]}>Retry</Text>}
+          </SpatialNavigationFocusableView>
           <SpatialNavigationFocusableView onSelect={() => router.back()}>
             {({ isFocused }) => <Text style={[styles.backText, isFocused && styles.focusedText]}>Go Back</Text>}
           </SpatialNavigationFocusableView>
@@ -593,16 +687,66 @@ export default function GamePlayerScreen() {
     async function loadSDKScript() {
       try {
         // Load the SDK script from the assets directory
-        const scriptPath = FileSystem.documentDirectory + 'gameliftstreams-1.0.0.js';
-        const assetModule = require('../assets/websdk/gameliftstreams-1.0.0.js');
-        const asset = Asset.fromModule(assetModule);
-        await asset.downloadAsync();
+        console.log('Loading GameLift Streams SDK...');
 
-        if (asset.localUri) {
-          const scriptContent = await FileSystem.readAsStringAsync(asset.localUri);
+        // Check if the file exists first
+        try {
+          const assetModule = require('../assets/websdk/gameliftstreams-1.0.0.js');
+          console.log('SDK module found:', assetModule ? 'Yes' : 'No');
+
+          const asset = Asset.fromModule(assetModule);
+          console.log('Asset created:', asset ? 'Yes' : 'No');
+
+          await asset.downloadAsync();
+          console.log('Asset downloaded successfully');
+
+          if (asset.localUri) {
+            console.log('SDK asset found at:', asset.localUri);
+
+            // Try to read the file content
+            try {
+              const scriptContent = await FileSystem.readAsStringAsync(asset.localUri);
+              console.log('SDK script loaded, length:', scriptContent.length);
+              console.log('SDK script first 100 chars:', scriptContent.substring(0, 100));
+
+              setSdkScript(scriptContent);
+              setSdkLoaded(true);
+              console.log('GameLift Streams SDK loaded successfully');
+            } catch (readError) {
+              console.error('Error reading SDK file:', readError);
+              throw readError;
+            }
+          } else {
+            console.error('Failed to load SDK: localUri is undefined');
+            setSessionState((prev) => ({
+              ...prev,
+              status: 'ERROR',
+              error: 'Failed to load GameLift Streams SDK: localUri is undefined',
+            }));
+          }
+        } catch (requireError) {
+          console.error('Error requiring SDK module:', requireError);
+
+          // Try direct file access as fallback
+          console.log('Trying direct file access as fallback...');
+
+          // Check if the file exists using FileSystem
+          const sdkPath = FileSystem.documentDirectory + 'gameliftstreams-1.0.0.js';
+
+          // Copy the file from assets to document directory if needed
+          await FileSystem.copyAsync({
+            from: Asset.fromModule(require('../assets/websdk/gameliftstreams-1.0.0.js')).uri,
+            to: sdkPath,
+          });
+
+          console.log('SDK copied to:', sdkPath);
+
+          const scriptContent = await FileSystem.readAsStringAsync(sdkPath);
+          console.log('SDK script loaded via direct access, length:', scriptContent.length);
+
           setSdkScript(scriptContent);
           setSdkLoaded(true);
-          console.log('GameLift Streams SDK loaded successfully');
+          console.log('GameLift Streams SDK loaded successfully via fallback method');
         }
       } catch (error) {
         console.error('Failed to load SDK script:', error);
@@ -633,6 +777,15 @@ export default function GamePlayerScreen() {
             mediaPlaybackRequiresUserAction={false}
             startInLoadingState={true}
             originWhitelist={['*']}
+            onError={(syntheticEvent) => {
+              const { nativeEvent } = syntheticEvent;
+              console.error('WebView error:', nativeEvent);
+              setSessionState((prev) => ({
+                ...prev,
+                status: 'ERROR',
+                error: `WebView error: ${nativeEvent.description || 'Unknown error'}`,
+              }));
+            }}
             renderLoading={() => (
               <View style={styles.webViewLoading}>
                 <ActivityIndicator size="large" color="#3498db" />
@@ -640,90 +793,121 @@ export default function GamePlayerScreen() {
               </View>
             )}
             onMessage={handleWebViewMessage}
+            onLoad={() => console.log('WebView loaded successfully')}
+            onLoadEnd={() => console.log('WebView load ended')}
+            onLoadStart={() => console.log('WebView load started')}
             // Pass session data to WebView
             injectedJavaScript={`
+              // Log that the WebView JavaScript is executing
+              console.log('WebView injectedJavaScript executing');
+              
               // Inject the GameLift Streams SDK directly
               ${sdkScript}
+              
+              // Log after SDK injection
+              console.log('SDK script injected, checking if gameliftstreams is defined');
+              console.log('gameliftstreams defined:', typeof gameliftstreams !== 'undefined');
               
               // Initialize the SDK after it's loaded
               try {
                 console.log('Initializing GameLift Streams SDK');
                 
                 // Set log level for debugging
-                gameliftstreams.setLogLevel('debug');
-                
-                // Create GameLiftStreams instance
-                const gameStreams = new gameliftstreams.GameLiftStreams({
-                  videoElement: document.getElementById('streamVideoElement'),
-                  audioElement: document.getElementById('streamAudioElement'),
-                  inputConfiguration: {
-                    autoMouse: true,
-                    autoKeyboard: true,
-                    autoGamepad: true,
-                    hapticFeedback: true,
-                    setCursor: 'visibility',
-                    autoPointerLock: 'fullscreen',
-                  },
-                  clientConnection: {
-                    connectionState: function(state) {
-                      console.log('Connection state:', state);
-                      updateStatus('Connection state: ' + state);
-                      window.ReactNativeWebView.postMessage(JSON.stringify({
-                        type: 'CONNECTION_STATE',
-                        state: state
-                      }));
-                      
-                      if (state === 'disconnected') {
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                          type: 'SESSION_ENDED'
-                        }));
-                      }
+                if (typeof gameliftstreams !== 'undefined') {
+                  console.log('GameLift Streams SDK found in global scope');
+                  gameliftstreams.setLogLevel('debug');
+                  
+                  // Create GameLiftStreams instance
+                  const gameStreams = new gameliftstreams.GameLiftStreams({
+                    videoElement: document.getElementById('streamVideoElement'),
+                    audioElement: document.getElementById('streamAudioElement'),
+                    inputConfiguration: {
+                      autoMouse: true,
+                      autoKeyboard: true,
+                      autoGamepad: true,
+                      hapticFeedback: true,
+                      setCursor: 'visibility',
+                      autoPointerLock: 'fullscreen',
                     },
-                    channelError: function(error) {
-                      console.error('Channel error:', error);
-                      updateStatus('Channel error: ' + error);
+                    clientConnection: {
+                      connectionState: function(state) {
+                        console.log('Connection state:', state);
+                        updateStatus('Connection state: ' + state);
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'CONNECTION_STATE',
+                          state: state
+                        }));
+                        
+                        if (state === 'disconnected') {
+                          window.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'SESSION_ENDED'
+                          }));
+                        }
+                      },
+                      channelError: function(error) {
+                        console.error('Channel error:', error);
+                        updateStatus('Channel error: ' + error);
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'STREAM_ERROR',
+                          error: 'WebRTC connection error: ' + error
+                        }));
+                      },
+                      serverDisconnect: function(reason) {
+                        console.log('Server disconnected:', reason);
+                        updateStatus('Server disconnected: ' + reason);
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'SERVER_DISCONNECT',
+                          reason: reason
+                        }));
+                      },
+                      applicationMessage: function(message) {
+                        console.log('Application message received, length:', message.length);
+                      }
+                    }
+                  });
+                  
+                  // Store the instance globally
+                  window.myGameLiftStreams = gameStreams;
+                  
+                  // Generate signal request
+                  console.log('Generating signal request...');
+                  gameStreams.generateSignalRequest()
+                    .then(function(signalRequest) {
+                      console.log('Signal request generated successfully');
+                      console.log('Signal request content:', signalRequest.substring(0, 100) + '...');
+                      updateStatus('Signal request generated, connecting to stream...');
+                      
+                      // Send the signal request to React Native
+                      console.log('Sending signal request to React Native...');
+                      console.log('ReactNativeWebView available:', !!window.ReactNativeWebView);
+                      
+                      if (window.ReactNativeWebView) {
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                          type: 'SIGNAL_REQUEST',
+                          signalRequest: signalRequest
+                        }));
+                        console.log('Signal request sent to React Native');
+                      } else {
+                        console.error('ReactNativeWebView not available');
+                        updateStatus('Error: ReactNativeWebView not available');
+                      }
+                    })
+                    .catch(function(error) {
+                      console.error('Error generating signal request:', error);
+                      updateStatus('Error generating signal request: ' + error.toString());
                       window.ReactNativeWebView.postMessage(JSON.stringify({
                         type: 'STREAM_ERROR',
-                        error: 'WebRTC connection error: ' + error
+                        error: 'Failed to generate signal request: ' + error.toString()
                       }));
-                    },
-                    serverDisconnect: function(reason) {
-                      console.log('Server disconnected:', reason);
-                      updateStatus('Server disconnected: ' + reason);
-                      window.ReactNativeWebView.postMessage(JSON.stringify({
-                        type: 'SERVER_DISCONNECT',
-                        reason: reason
-                      }));
-                    },
-                    applicationMessage: function(message) {
-                      console.log('Application message received, length:', message.length);
-                    }
-                  }
-                });
-                
-                // Store the instance globally
-                window.myGameLiftStreams = gameStreams;
-                
-                // Generate signal request
-                gameStreams.generateSignalRequest()
-                  .then(function(signalRequest) {
-                    console.log('Signal request generated successfully');
-                    updateStatus('Signal request generated, connecting to stream...');
-                    
-                    // Send the signal request to React Native
-                    window.ReactNativeWebView.postMessage(JSON.stringify({
-                      type: 'SIGNAL_REQUEST',
-                      signalRequest: signalRequest
-                    }));
-                  })
-                  .catch(function(error) {
-                    console.error('Error generating signal request:', error);
-                    updateStatus('Error generating signal request: ' + error.toString());
-                    window.ReactNativeWebView.postMessage(JSON.stringify({
-                      type: 'STREAM_ERROR',
-                      error: 'Failed to generate signal request: ' + error.toString()
-                    }));
-                  });
+                    });
+                } else {
+                  console.error('GameLift Streams SDK not loaded properly');
+                  updateStatus('Error: GameLift Streams SDK not loaded properly');
+                  window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'STREAM_ERROR',
+                    error: 'GameLift Streams SDK not loaded properly'
+                  }));
+                }
                 
                 // Set session data
                 window.SESSION_DATA = {

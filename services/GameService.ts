@@ -22,6 +22,14 @@ export interface StreamSession {
   error?: string;
 }
 
+export interface StartStreamRequest {
+  AppIdentifier: string;
+  SGIdentifier: string;
+  UserId: string;
+  SignalRequest: string;
+  Regions: string[];
+}
+
 /**
  * Fetches the list of available games from the API
  */
@@ -92,7 +100,7 @@ export const createStreamSession = async (
       throw new Error('SignalRequest cannot be null or empty');
     }
     
-    const payload = {
+    const payload: StartStreamRequest = {
       AppIdentifier: appId,
       SGIdentifier: sgId,
       UserId: 'DefaultUser', // In production, use actual user ID
@@ -100,29 +108,54 @@ export const createStreamSession = async (
       Regions: regions
     };
 
-    console.log('Sending request to create stream session');
+    console.log('Sending request to create stream session with payload:', JSON.stringify({
+      AppIdentifier: payload.AppIdentifier,
+      SGIdentifier: payload.SGIdentifier,
+      UserId: payload.UserId,
+      SignalRequest: payload.SignalRequest ? `[length: ${payload.SignalRequest.length}]` : 'undefined',
+      Regions: payload.Regions
+    }));
 
-    const response = await post({
-      apiName: 'gamelift-api',
-      path: '/',
-      options: {
-        body: payload,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+    // Log the API endpoint being used
+    console.log('API endpoint:', 'gamelift-api/');
+
+    try {
+      console.log('Making API call to create stream session...');
+      const response = await post({
+        apiName: 'gamelift-api',
+        path: '/',
+        options: {
+          body: payload,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      }).response;
+
+      console.log('API call completed, parsing response...');
+      const data = await response.body.json();
+      console.log('Stream session created - Response:', JSON.stringify(data));
+      return data;
+    } catch (apiError) {
+      console.error('API error in createStreamSession:', apiError);
+      
+      // Check if there's a response with error details
+      if (apiError.response) {
+        try {
+          const errorBody = await apiError.response.body.json();
+          console.error('API error response body:', JSON.stringify(errorBody));
+          throw new Error(`API error: ${errorBody.message || JSON.stringify(errorBody)}`);
+        } catch (parseError) {
+          console.error('Error parsing API error response:', parseError);
+          throw new Error(`API error: ${apiError.message}`);
         }
       }
-    }).response;
-
-    const data = await response.body.json();
-    console.log('Stream session created:', data);
-    return data;
+      
+      throw apiError;
+    }
   } catch (error) {
     console.error('Error creating stream session:', error);
-    // Enhanced error logging
-    if (error.response) {
-      console.error('API response error:', error.response.status, error.response.data);
-    }
     throw error;
   }
 };
@@ -154,7 +187,7 @@ export const getSessionStatus = async (sgId: string, arn: string): Promise<Strea
     }).response;
 
     const data = await response.body.json();
-    console.log('Session status:', data);
+    console.log('Session status response:', JSON.stringify(data));
     
     // If the session is active and has a signal response, log it for debugging
     if (data.status === 'ACTIVE' && data.signalResponse) {
@@ -191,6 +224,7 @@ export const updateStreamSession = async (
     const token = session.tokens?.idToken?.toString();
     
     console.log(`Updating stream session ${arn} in group ${sgId} with signal request`);
+    console.log('Signal request for update:', signalRequest);
     
     const response = await post({
       apiName: 'gamelift-api',
@@ -207,7 +241,7 @@ export const updateStreamSession = async (
     }).response;
 
     const data = await response.body.json();
-    console.log('Stream session updated:', data);
+    console.log('Stream session updated - Response:', JSON.stringify(data));
     return data;
   } catch (error) {
     console.error('Error updating stream session:', error);
@@ -246,7 +280,7 @@ export const terminateStreamSession = async (sgId: string, arn: string): Promise
     }).response;
 
     const data = await response.body.json();
-    console.log('Session terminated:', data);
+    console.log('Session terminated - Response:', JSON.stringify(data));
     return data;
   } catch (error) {
     console.error('Error terminating session:', error);
