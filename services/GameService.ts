@@ -112,7 +112,19 @@ export const processSignalResponse = async (signalResponse: string): Promise<voi
   if (!gameLifStreamsInstance) {
     throw new Error('GameLift Streams SDK not initialized. Call initializeGameLiftStreams first.');
   }
-  await gameLifStreamsInstance.processSignalResponse(signalResponse);
+  
+  try {
+    await gameLifStreamsInstance.processSignalResponse(signalResponse);
+  } catch (error: any) {
+    // Check if it's the specific RTCPeerConnection state error
+    if (error.message && error.message.includes('Failed to set remote answer sdp: Called in wrong state: stable')) {
+      console.warn('Ignoring RTCPeerConnection state error - connection may already be established');
+      // Connection is likely already established, so we can consider this a success
+      return;
+    }
+    // For any other errors, rethrow
+    throw error;
+  }
 };
 
 /**

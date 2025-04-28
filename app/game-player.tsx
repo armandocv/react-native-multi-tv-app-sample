@@ -13,6 +13,7 @@ import {
   StreamSession,
 } from '../services/GameService';
 import WebView, { WebViewProps } from 'react-native-webview';
+import CustomWebView from '../components/player/CustomWebView';
 import { SpatialNavigationRoot, SpatialNavigationFocusableView } from 'react-tv-space-navigation';
 import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system';
@@ -909,37 +910,48 @@ export default function GamePlayerScreen() {
         {!streamReady && <Text style={styles.title}>{name}</Text>}
 
         {sessionState.status === 'ACTIVE' && sdkLoaded ? (
-          <WebView
-            ref={webViewRef}
-            source={{ html: HTML_CONTENT }}
-            style={styles.gameContainer}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            allowsInlineMediaPlayback={true}
-            mediaPlaybackRequiresUserAction={false}
-            startInLoadingState={true}
-            originWhitelist={['*']}
-            onError={(syntheticEvent: any) => {
-              const { nativeEvent } = syntheticEvent;
-              console.error('WebView error:', nativeEvent);
-              setSessionState((prev) => ({
-                ...prev,
-                status: 'ERROR',
-                error: `WebView error: ${nativeEvent.description || 'Unknown error'}`,
-              }));
-            }}
-            renderLoading={() => (
-              <View style={styles.webViewLoading}>
-                <ActivityIndicator size="large" color="#3498db" />
-                <Text style={styles.loadingText}>Initializing game stream...</Text>
-              </View>
-            )}
-            onMessage={handleWebViewMessage}
-            onLoad={() => console.log('WebView loaded successfully')}
-            onLoadEnd={() => console.log('WebView load ended')}
-            onLoadStart={() => console.log('WebView load started')}
-            // Pass session data to WebView
-            injectedJavaScript={`
+          Platform.OS === 'web' ? (
+            // For web platform, use an iframe instead of WebView
+            <View style={styles.gameContainer}>
+              <iframe
+                src={`data:text/html;charset=utf-8,${encodeURIComponent(HTML_CONTENT)}`}
+                style={{ width: '100%', height: '100%', border: 'none' }}
+                title="Game Stream"
+              />
+            </View>
+          ) : (
+            // For native platforms, use CustomWebView
+            <CustomWebView
+              ref={webViewRef}
+              source={{ html: HTML_CONTENT }}
+              style={styles.gameContainer}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              allowsInlineMediaPlayback={true}
+              mediaPlaybackRequiresUserAction={false}
+              startInLoadingState={true}
+              originWhitelist={['*']}
+              onError={(syntheticEvent: any) => {
+                const { nativeEvent } = syntheticEvent;
+                console.error('WebView error:', nativeEvent);
+                setSessionState((prev) => ({
+                  ...prev,
+                  status: 'ERROR',
+                  error: `WebView error: ${nativeEvent.description || 'Unknown error'}`,
+                }));
+              }}
+              renderLoading={() => (
+                <View style={styles.webViewLoading}>
+                  <ActivityIndicator size="large" color="#3498db" />
+                  <Text style={styles.loadingText}>Initializing game stream...</Text>
+                </View>
+              )}
+              onMessage={handleWebViewMessage}
+              onLoad={() => console.log('WebView loaded successfully')}
+              onLoadEnd={() => console.log('WebView load ended')}
+              onLoadStart={() => console.log('WebView load started')}
+              // Pass session data to WebView
+              injectedJavaScript={`
               // Log that the WebView JavaScript is executing
               console.log('WebView injectedJavaScript executing');
               
@@ -1011,7 +1023,8 @@ export default function GamePlayerScreen() {
               
               true;
             `}
-          />
+            />
+          )
         ) : (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#3498db" />
