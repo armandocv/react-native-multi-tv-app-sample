@@ -776,70 +776,52 @@ export default function GamePlayerScreen() {
     }
   }, [isAuthenticated, appId, sgId]);
 
+  // Import the SDK directly
+  const sdkModule = require('../websdk/gameliftstreams-1.0.0.js');
+
   useEffect(() => {
     async function loadSDKScript() {
       try {
-        // Load the SDK script from the assets directory
         console.log('Loading GameLift Streams SDK...');
 
-        // Check if the file exists first
+        // Use a simpler approach to load the SDK script
         try {
-          const assetModule = require('../assets/websdk/gameliftstreams-1.0.0.js');
-          console.log('SDK module found:', assetModule ? 'Yes' : 'No');
+          // Use a direct import of the SDK script
+          console.log('Using direct import of SDK script');
 
-          const asset = Asset.fromModule(assetModule);
-          console.log('Asset created:', asset ? 'Yes' : 'No');
+          // Convert the module to a string
+          const scriptContent = JSON.stringify(sdkModule);
 
-          await asset.downloadAsync();
-          console.log('Asset downloaded successfully');
-
-          if (asset.localUri) {
-            console.log('SDK asset found at:', asset.localUri);
-
-            // Try to read the file content
-            try {
-              const scriptContent = await FileSystem.readAsStringAsync(asset.localUri);
-              console.log('SDK script loaded, length:', scriptContent.length);
-              console.log('SDK script first 100 chars:', scriptContent.substring(0, 100));
-
-              setSdkScript(scriptContent);
-              setSdkLoaded(true);
-              console.log('GameLift Streams SDK loaded successfully');
-            } catch (readError: any) {
-              console.error('Error reading SDK file:', readError);
-              throw readError;
-            }
+          if (scriptContent) {
+            console.log('SDK script loaded, length:', scriptContent.length);
+            setSdkScript(scriptContent);
+            setSdkLoaded(true);
+            console.log('GameLift Streams SDK loaded successfully');
           } else {
-            console.error('Failed to load SDK: localUri is undefined');
-            setSessionState((prev) => ({
-              ...prev,
-              status: 'ERROR',
-              error: 'Failed to load GameLift Streams SDK: localUri is undefined',
-            }));
+            throw new Error('Failed to convert SDK module to string');
           }
-        } catch (requireError: any) {
-          console.error('Error requiring SDK module:', requireError);
+        } catch (importError) {
+          console.error('Error importing SDK module:', importError);
 
-          // Try direct file access as fallback
-          console.log('Trying direct file access as fallback...');
+          // Fallback to using a hardcoded path
+          console.log('Trying fallback method with hardcoded path...');
 
-          // Check if the file exists using FileSystem
-          const sdkPath = FileSystem.documentDirectory + 'gameliftstreams-1.0.0.js';
+          try {
+            // Try to load from the public directory
+            const scriptContent = await fetch('/websdk/gameliftstreams-1.0.0.js').then((response) => response.text());
 
-          // Copy the file from assets to document directory if needed
-          await FileSystem.copyAsync({
-            from: Asset.fromModule(require('../assets/websdk/gameliftstreams-1.0.0.js')).uri,
-            to: sdkPath,
-          });
+            console.log('SDK script loaded via fetch, length:', scriptContent.length);
+            setSdkScript(scriptContent);
+            setSdkLoaded(true);
+            console.log('GameLift Streams SDK loaded successfully via fetch');
+          } catch (fetchError) {
+            console.error('Error fetching SDK script:', fetchError);
 
-          console.log('SDK copied to:', sdkPath);
-
-          const scriptContent = await FileSystem.readAsStringAsync(sdkPath);
-          console.log('SDK script loaded via direct access, length:', scriptContent.length);
-
-          setSdkScript(scriptContent);
-          setSdkLoaded(true);
-          console.log('GameLift Streams SDK loaded successfully via fallback method');
+            // Final fallback - use the SDK that's already loaded in memory
+            console.log('Using SDK that is already loaded in memory');
+            setSdkLoaded(true);
+            // Leave sdkScript empty - the WebView will use the SDK that's already loaded
+          }
         }
       } catch (error: any) {
         console.error('Failed to load SDK script:', error);
