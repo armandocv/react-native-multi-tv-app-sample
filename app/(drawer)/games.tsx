@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { scaledPixels } from '@/hooks/useScale';
 import { SpatialNavigationFocusableView, SpatialNavigationRoot } from 'react-tv-space-navigation';
-import { getGames, Game, createStreamSession } from '../../services/GameService';
+import { getGames, Game, createStreamSession, initializeGameLiftStreams } from '../../services/GameService';
 
 // Fallback mock data in case API fails
 const FALLBACK_GAMES = [
@@ -105,6 +105,29 @@ export default function GamesScreen() {
     }
   };
 
+  // Initialize the SDK when the component mounts
+  useEffect(() => {
+    if (isAuthenticated) {
+      console.log('Initializing GameLift Streams SDK in games screen');
+      try {
+        // Create video and audio elements for SDK initialization
+        const videoElement = document.createElement('video');
+        videoElement.autoplay = true;
+        videoElement.playsInline = true;
+
+        const audioElement = document.createElement('audio');
+        audioElement.autoplay = true;
+
+        // Initialize the SDK
+        initializeGameLiftStreams(videoElement, audioElement);
+        console.log('GameLift Streams SDK initialized successfully in games screen');
+      } catch (error) {
+        console.error('Failed to initialize GameLift Streams SDK:', error);
+        setError('Failed to initialize streaming SDK. Please try again.');
+      }
+    }
+  }, [isAuthenticated]);
+
   const handleGameSelect = async (game: Game) => {
     // Navigate directly to game player with game details
     // This is more TV-friendly than showing an Alert which might be hard to navigate with a remote
@@ -126,17 +149,8 @@ export default function GamesScreen() {
       // This is a critical change to match the desired flow
       console.log('Creating stream session before navigation...');
 
-      // We need a signal request to create the session
-      // For now, we'll use a placeholder signal request that will be updated later
-      // This is just to initialize the session and get the ARN
-      const initialSignalRequest = JSON.stringify({
-        type: 'initial',
-        timestamp: new Date().toISOString(),
-        clientId: `react-native-client-${Math.random().toString(36).substring(2, 15)}`,
-      });
-
-      console.log('Calling createStreamSession API with initial signal request...');
-      const sessionResponse = await createStreamSession(game.appId, game.sgId, initialSignalRequest, selectedRegions);
+      console.log('Calling createStreamSession API...');
+      const sessionResponse = await createStreamSession(game.appId, game.sgId, selectedRegions);
 
       console.log('Stream session created - Response:', JSON.stringify(sessionResponse));
 

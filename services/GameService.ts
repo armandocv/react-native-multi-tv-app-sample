@@ -7,6 +7,54 @@ import * as gameliftstreamssdk from '../websdk/gameliftstreams-1.0.0';
 // Set log level for GameLift Streams SDK
 gameliftstreamssdk.setLogLevel('debug');
 
+// GameLift Streams instance
+let gameLifStreamsInstance: gameliftstreamssdk.GameLiftStreams | null = null;
+
+/**
+ * Initialize the GameLift Streams SDK with video and audio elements
+ * This must be called before using any streaming functionality
+ * 
+ * @param videoElement - The HTML video element to use for streaming
+ * @param audioElement - The HTML audio element to use for streaming
+ */
+export const initializeGameLiftStreams = (videoElement: HTMLVideoElement, audioElement: HTMLAudioElement): void => {
+  if (gameLifStreamsInstance) {
+    gameLifStreamsInstance.close();
+  }
+  
+  gameLifStreamsInstance = new gameliftstreamssdk.GameLiftStreams({
+    videoElement,
+    audioElement,
+    inputConfiguration: {
+      autoMouse: true,
+      autoKeyboard: true,
+      autoGamepad: true,
+      hapticFeedback: true,
+      setCursor: 'visibility',
+      autoPointerLock: 'fullscreen'
+    },
+    clientConnection: {
+      connectionState: (state: string) => {
+        console.log('Connection state:', state);
+        if (state === 'disconnected') {
+          console.log('Connection disconnected');
+        }
+      },
+      channelError: (error: any) => {
+        console.error('WebRTC channel error:', error);
+      },
+      serverDisconnect: (reasonCode: string) => {
+        console.log('Server disconnected with reason:', reasonCode);
+      },
+      applicationMessage: (message: any) => {
+        console.log('Application message received:', message);
+      }
+    }
+  });
+  
+  console.log('GameLift Streams SDK initialized');
+};
+
 export interface Game {
   sgId: string;
   appId: string;
@@ -61,7 +109,10 @@ export function ToGameId(appId: string, sgId: string): string {
  * @param signalResponse - The signal response from the server
  */
 export const processSignalResponse = async (signalResponse: string): Promise<void> => {
-  await gameliftstreamssdk.processSignalResponse(signalResponse);
+  if (!gameLifStreamsInstance) {
+    throw new Error('GameLift Streams SDK not initialized. Call initializeGameLiftStreams first.');
+  }
+  await gameLifStreamsInstance.processSignalResponse(signalResponse);
 };
 
 /**
@@ -85,7 +136,7 @@ export const getGames = async (): Promise<Game[]> => {
     }).response;
     
     const data = await response.body.json();
-    const games = data as Game[];
+    const games = data as unknown as Game[];
     
     // Sort games by ordering and name
     return games.sort((g1, g2) => {
@@ -95,7 +146,7 @@ export const getGames = async (): Promise<Game[]> => {
         return g1.ordering - g2.ordering;
       }
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error fetching games:', error);
     if (error.response) {
       console.error('API response error:', error.response.status, error.response.data);
@@ -125,8 +176,13 @@ export const createStreamSession = async (
     
     console.log(`Creating stream session for app ${appId}, group ${sgId} in regions: ${regionsArray.join(', ')}`);
     
-    // Generate the signal request directly using the SDK
-    const signalRequest = await gameliftstreamssdk.generateSignalRequest();
+    // Check if GameLift Streams SDK is initialized
+    if (!gameLifStreamsInstance) {
+      throw new Error('GameLift Streams SDK not initialized. Call initializeGameLiftStreams first.');
+    }
+    
+    // Generate the signal request using the SDK instance
+    const signalRequest = await gameLifStreamsInstance.generateSignalRequest();
     
     // Ensure signalRequest is not null or empty
     if (!signalRequest) {
@@ -152,7 +208,7 @@ export const createStreamSession = async (
         apiName: 'gamelift-api',
         path: '/',
         options: {
-          body: payload,
+          body: payload as any,
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
@@ -162,8 +218,8 @@ export const createStreamSession = async (
 
       const data = await response.body.json();
       console.log('Stream session created successfully');
-      return data;
-    } catch (apiError) {
+      return data as unknown as StreamSession;
+    } catch (apiError: any) {
       console.error('API error in createStreamSession:', apiError);
       
       // Check if there's a response with error details
@@ -180,7 +236,7 @@ export const createStreamSession = async (
       
       throw apiError;
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating stream session:', error);
     throw error;
   }
@@ -213,8 +269,8 @@ export const getSessionStatus = async (sgId: string, arn: string): Promise<Strea
     }).response;
 
     const data = await response.body.json();
-    return data;
-  } catch (error) {
+    return data as unknown as StreamSession;
+  } catch (error: any) {
     console.error('Error checking session status:', error);
     if (error.response) {
       console.error('API response error:', error.response.status, error.response.data);
@@ -235,8 +291,13 @@ export const updateStreamSession = async (
   arn: string
 ): Promise<StreamSession> => {
   try {
-    // Generate a new signal request
-    const signalRequest = await gameliftstreamssdk.generateSignalRequest();
+    // Check if GameLift Streams SDK is initialized
+    if (!gameLifStreamsInstance) {
+      throw new Error('GameLift Streams SDK not initialized. Call initializeGameLiftStreams first.');
+    }
+    
+    // Generate a new signal request using the SDK instance
+    const signalRequest = await gameLifStreamsInstance.generateSignalRequest();
     
     // Get current session to ensure we have a valid token
     const session = await fetchAuthSession();
@@ -250,7 +311,7 @@ export const updateStreamSession = async (
       options: {
         body: {
           SignalRequest: signalRequest
-        },
+        } as any,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
@@ -260,8 +321,8 @@ export const updateStreamSession = async (
 
     const data = await response.body.json();
     console.log('Stream session updated successfully');
-    return data;
-  } catch (error) {
+    return data as unknown as StreamSession;
+  } catch (error: any) {
     console.error('Error updating stream session:', error);
     if (error.response) {
       console.error('API response error:', error.response.status, error.response.data);
@@ -299,7 +360,7 @@ export const terminateStreamSession = async (sgId: string, arn: string): Promise
     const data = await response.body.json();
     console.log('Session terminated successfully');
     return data;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error terminating session:', error);
     if (error.response) {
       console.error('API response error:', error.response.status, error.response.data);
@@ -336,7 +397,7 @@ export const waitForStreamSessionReady = async (
       
       // Wait for 1 second before polling again
       await new Promise(resolve => setTimeout(resolve, 1000));
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error while waiting for stream session:', error);
       throw error;
     }
