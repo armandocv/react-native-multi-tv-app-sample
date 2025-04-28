@@ -325,6 +325,9 @@ export default function GamePlayerScreen() {
     }
   }, [sessionState.status, sessionState.sessionArn]);
 
+  // Track whether we've already started polling for this session
+  const [sessionPollingStarted, setSessionPollingStarted] = useState(false);
+
   useEffect(() => {
     if (isAuthenticated && appId && sgId) {
       // Initialize the session state with any params passed from the games screen
@@ -350,9 +353,13 @@ export default function GamePlayerScreen() {
         });
 
         // If we have a session ARN but it's not active yet, start polling for status
-        if (sessionStatus !== 'ACTIVE') {
+        // But only if we haven't already started polling for this session
+        if (sessionStatus !== 'ACTIVE' && !sessionPollingStarted && !isPolling) {
           console.log('Session exists but not active, starting polling...');
+          setSessionPollingStarted(true); // Mark that we've started polling for this session
           waitForSessionReady(String(sgId), sessionArn);
+        } else if (sessionPollingStarted) {
+          console.log('Polling already started for this session, skipping duplicate call');
         }
       } else {
         // No session ARN provided, initialize as normal
@@ -369,7 +376,7 @@ export default function GamePlayerScreen() {
       console.log('Authentication confirmed, appId and sgId available:', { appId, sgId });
       console.log('Waiting for WebView to initialize and generate signal request...');
     }
-  }, [isAuthenticated, appId, sgId, params]);
+  }, [isAuthenticated, appId, sgId]); // Remove params from dependencies to prevent re-runs
 
   // Create a ref for the WebView HTML content
   const [webViewHtmlContent, setWebViewHtmlContent] = useState(HTML_CONTENT);
@@ -458,79 +465,139 @@ export default function GamePlayerScreen() {
     }
   };
 
+  // Store polling state to prevent multiple polling loops
+  const [isPolling, setIsPolling] = useState(false);
+
   const waitForSessionReady = async (sgId: string, arn: string, timeoutMs: number = 60000) => {
+    // If already polling, don't start another polling loop
+    if (isPolling) {
+      console.log('Already polling for session status, ignoring duplicate call');
+      return;
+    }
+
+    setIsPolling(true);
     const startTime = Date.now();
     console.log(`Waiting for session ${arn} to be ready (timeout: ${timeoutMs}ms)`);
 
-    while (Date.now() - startTime < timeoutMs) {
-      try {
-        const sessionData = await getSessionStatus(sgId, arn);
-        console.log(`Session status: ${sessionData.status}`);
-        console.log('Session data:', JSON.stringify(sessionData));
+    // STRICT maximum number of polling attempts to prevent infinite loops
+    const maxAttempts = 10;
+    let attempts = 0;
 
-        if (sessionData.status === 'ACTIVE') {
-          console.log('Session is active, signal response available:', !!sessionData.signalResponse);
+    try {
+      // Use a for loop with a fixed number of iterations instead of a while loop
+      for (let i = 0; i < maxAttempts; i++) {
+        attempts = i + 1;
+        console.log(`Polling attempt ${attempts}/${maxAttempts} for session ${arn}`);
 
+        // Check if we've exceeded the timeout
+        if (Date.now() - startTime >= timeoutMs) {
+          console.error('Timeout waiting for session to be ready');
+          setPollingTimeout(true);
           setSessionState((prev) => ({
             ...prev,
-            status: 'ACTIVE',
-            sessionArn: sessionData.arn,
-            region: sessionData.region || '',
-            signalResponse: sessionData.signalResponse || '',
+            status: 'ERROR',
+            error: 'Timeout waiting for session to be ready',
           }));
-
-          // If we have a signal response, process it using the GameService
-          if (sessionData.signalResponse) {
-            console.log('Processing signal response from session data');
-            try {
-              await processSignalResponse(sessionData.signalResponse);
-              console.log('Signal response processed successfully');
-
-              // Notify WebView that stream is ready
-              if (webViewRef.current) {
-                webViewRef.current.injectJavaScript(`
-                  window.ReactNativeWebView.postMessage(JSON.stringify({
-                    type: 'STREAM_READY'
-                  }));
-                  true;
-                `);
-              }
-
-              setStreamReady(true);
-            } catch (error: any) {
-              console.error('Error processing signal response:', error);
-              setSessionState((prev) => ({
-                ...prev,
-                status: 'ERROR',
-                error: 'Failed to process signal response: ' + (error.message || 'Unknown error'),
-              }));
-            }
-          }
-
-          return;
+          break;
         }
 
-        // Wait before polling again
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      } catch (error: any) {
-        console.error('Error checking session status:', error);
-        setSessionState((prev) => ({
-          ...prev,
-          status: 'ERROR',
-          error: 'Failed to check session status: ' + (error.message || 'Unknown error'),
-        }));
-        return;
+        try {
+          const sessionData = await getSessionStatus(sgId, arn);
+          console.log(`Session status: ${sessionData.status}`);
+          console.log('Session data:', JSON.stringify(sessionData));
+
+          // Consider any status as active if we have a signal response
+          // This helps prevent infinite polling if the status doesn't match exactly what we expect
+          const isActive = sessionData.status === 'ACTIVE' || !!sessionData.signalResponse;
+
+          if (isActive) {
+            console.log('Session is considered active, signal response available:', !!sessionData.signalResponse);
+
+            setSessionState((prev) => ({
+              ...prev,
+              status: 'ACTIVE',
+              sessionArn: sessionData.arn,
+              region: sessionData.region || '',
+              signalResponse: sessionData.signalResponse || '',
+            }));
+
+            // If we have a signal response, process it using the GameService
+            if (sessionData.signalResponse) {
+              console.log('Processing signal response from session data');
+              try {
+                await processSignalResponse(sessionData.signalResponse);
+                console.log('Signal response processed successfully');
+
+                // Notify WebView that stream is ready
+                if (webViewRef.current) {
+                  webViewRef.current.injectJavaScript(`
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: 'STREAM_READY'
+                    }));
+                    true;
+                  `);
+                }
+
+                setStreamReady(true);
+              } catch (error: any) {
+                console.error('Error processing signal response:', error);
+                setSessionState((prev) => ({
+                  ...prev,
+                  status: 'ERROR',
+                  error: 'Failed to process signal response: ' + (error.message || 'Unknown error'),
+                }));
+              }
+            } else {
+              console.warn('Session is active but no signal response available');
+              // Even without a signal response, consider the session ready to avoid infinite polling
+              setStreamReady(true);
+            }
+
+            // Successfully processed session, exit the polling loop
+            return;
+          }
+
+          // If this is the last attempt and we still don't have an active session,
+          // consider it a failure to avoid infinite polling
+          if (i === maxAttempts - 1) {
+            console.warn(`Last polling attempt (${maxAttempts}) reached without active session`);
+            setSessionState((prev) => ({
+              ...prev,
+              status: 'ERROR',
+              error: `Maximum polling attempts (${maxAttempts}) reached. Session may still be initializing.`,
+            }));
+            break;
+          }
+
+          // Wait before polling again - use a longer delay to reduce API load
+          console.log(`Waiting 3 seconds before next polling attempt...`);
+          await new Promise((resolve) => setTimeout(resolve, 3000)); // Increased delay to 3 seconds
+        } catch (error: any) {
+          console.error('Error checking session status:', error);
+          setSessionState((prev) => ({
+            ...prev,
+            status: 'ERROR',
+            error: 'Failed to check session status: ' + (error.message || 'Unknown error'),
+          }));
+          break;
+        }
       }
+    } finally {
+      // Always reset the polling flag when done
+      setIsPolling(false);
     }
 
-    // Timeout reached
-    console.error('Timeout waiting for session to be ready');
-    setPollingTimeout(true);
-    setSessionState((prev) => ({
-      ...prev,
-      status: 'ERROR',
-      error: 'Timeout waiting for session to be ready',
-    }));
+    // If we've reached here, we've either hit the maximum attempts or encountered an error
+    console.log(`Finished polling after ${attempts} attempts`);
+
+    if (attempts >= maxAttempts) {
+      console.error(`Maximum polling attempts (${maxAttempts}) reached`);
+      setSessionState((prev) => ({
+        ...prev,
+        status: 'ERROR',
+        error: `Maximum polling attempts (${maxAttempts}) reached. Session may still be initializing.`,
+      }));
+    }
   };
 
   const handleCloseSession = async (skipConfirmation = false) => {
@@ -681,6 +748,9 @@ export default function GamePlayerScreen() {
   const [sdkScript, setSdkScript] = useState('');
   const [sdkLoaded, setSdkLoaded] = useState(false);
 
+  // Track whether we've already created a session
+  const [sessionCreated, setSessionCreated] = useState(false);
+
   // Initialize SDK as soon as possible
   useEffect(() => {
     // Initialize the SDK immediately
@@ -688,14 +758,20 @@ export default function GamePlayerScreen() {
     if (initializeSDK()) {
       console.log('SDK initialized successfully, checking if we need to start a session');
 
-      // If we're authenticated and have app/sg IDs but no existing session, start one
-      if (isAuthenticated && appId && sgId && !sessionState.sessionArn) {
-        console.log('Starting game session immediately after SDK initialization');
+      // Check if we already have a session ARN from navigation params
+      const sessionArnFromParams = params.sessionArn as string | undefined;
+
+      if (sessionArnFromParams) {
+        console.log('Session ARN found in navigation params, not creating a new session');
+        setSessionCreated(true);
+      }
+      // Only create a new session if we don't have one from params and haven't created one yet
+      else if (isAuthenticated && appId && sgId && !sessionState.sessionArn && !sessionCreated) {
+        console.log('No session ARN in params, creating a new session');
+        setSessionCreated(true); // Mark that we're creating a session to prevent duplicates
         startGameSession();
-      } else if (sessionState.sessionArn) {
-        console.log('Existing session found, no need to create a new one');
       } else {
-        console.log('Not starting session yet, waiting for authentication or parameters');
+        console.log('Not starting session: already created or waiting for authentication/parameters');
       }
     }
   }, [isAuthenticated, appId, sgId]);
