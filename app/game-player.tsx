@@ -247,20 +247,49 @@ export default function GamePlayerScreen() {
 
   useEffect(() => {
     if (isAuthenticated && appId && sgId) {
-      // Initialize the session state
-      setSessionState({
-        status: 'INITIALIZING',
-        sessionArn: '',
-        region: '',
-        error: '',
-        signalResponse: '',
+      // Initialize the session state with any params passed from the games screen
+      const sessionArn = params.sessionArn;
+      const sessionRegion = params.sessionRegion;
+      const sessionStatus = params.sessionStatus;
+      const initialSignalResponse = params.initialSignalResponse;
+
+      console.log('Received session data from navigation params:', {
+        sessionArn,
+        sessionRegion,
+        sessionStatus,
+        hasSignalResponse: !!initialSignalResponse,
       });
+
+      if (sessionArn) {
+        setSessionState({
+          status: sessionStatus === 'ACTIVE' ? 'ACTIVE' : 'WAITING_FOR_SESSION',
+          sessionArn: sessionArn,
+          region: sessionRegion || '',
+          error: '',
+          signalResponse: initialSignalResponse || '',
+        });
+
+        // If we have a session ARN but it's not active yet, start polling for status
+        if (sessionStatus !== 'ACTIVE') {
+          console.log('Session exists but not active, starting polling...');
+          waitForSessionReady(String(sgId), sessionArn);
+        }
+      } else {
+        // No session ARN provided, initialize as normal
+        setSessionState({
+          status: 'INITIALIZING',
+          sessionArn: '',
+          region: '',
+          error: '',
+          signalResponse: '',
+        });
+      }
 
       // For debugging purposes, let's log that we're in this effect
       console.log('Authentication confirmed, appId and sgId available:', { appId, sgId });
       console.log('Waiting for WebView to initialize and generate signal request...');
     }
-  }, [isAuthenticated, appId, sgId]);
+  }, [isAuthenticated, appId, sgId, params]);
 
   // We'll no longer use this function directly
   // Instead, we'll wait for the WebView to generate the signal request first
@@ -492,29 +521,15 @@ export default function GamePlayerScreen() {
           console.log('Signal request received from WebView');
           console.log('Signal request length:', data.signalRequest ? data.signalRequest.length : 0);
 
-          // Create a new session with the signal request
-          if (!sessionState.sessionArn) {
-            console.log('Creating new session with signal request from WebView');
-            // Make sure signalRequest is not undefined or empty
-            if (!data.signalRequest) {
-              console.error('Signal request is empty or undefined');
-              setSessionState((prev) => ({
-                ...prev,
-                status: 'ERROR',
-                error: 'Signal request is empty or undefined',
-              }));
-              return;
-            }
-            startGameSession(data.signalRequest);
-          } else {
-            // For existing sessions, we need to update with the signal request
-            console.log('Updating existing session with signal request');
+          // If we already have a session ARN from the games screen, update the existing session
+          if (sessionState.sessionArn) {
+            console.log('Updating existing session with new signal request');
             updateStreamSession(String(sgId), sessionState.sessionArn, data.signalRequest)
               .then((response) => {
                 console.log('Stream session updated with signal request:', JSON.stringify(response));
 
                 // If the session is already active, we need to pass the signal response back to the WebView
-                if (sessionState.status === 'ACTIVE' && response.signalResponse) {
+                if (response.signalResponse) {
                   console.log('Session is active, processing signal response');
                   webViewRef.current?.injectJavaScript(`
                     try {
@@ -555,6 +570,10 @@ export default function GamePlayerScreen() {
                   error: 'Failed to update session with signal request: ' + (error.message || 'Unknown error'),
                 }));
               });
+          } else {
+            // No existing session, create a new one
+            console.log('No existing session found, creating new session with signal request');
+            startGameSession(data.signalRequest);
           }
           break;
 

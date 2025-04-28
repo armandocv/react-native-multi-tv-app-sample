@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { scaledPixels } from '@/hooks/useScale';
 import { SpatialNavigationFocusableView, SpatialNavigationRoot } from 'react-tv-space-navigation';
-import { getGames, Game } from '../../services/GameService';
+import { getGames, Game, createStreamSession } from '../../services/GameService';
 
 // Fallback mock data in case API fails
 const FALLBACK_GAMES = [
@@ -122,12 +122,29 @@ export default function GamesScreen() {
         regions: selectedRegions,
       });
 
-      // Note: We don't need to call createStreamSession here directly
-      // The game-player.tsx component will handle the API call when it loads
-      // This is because we need to generate a signal request from the WebRTC SDK first
-      // which happens in the WebView inside game-player.tsx
+      // IMPORTANT: Call createStreamSession here directly before navigating to the game player
+      // This is a critical change to match the desired flow
+      console.log('Creating stream session before navigation...');
 
-      // Navigate to the game player with the game details
+      // We need a signal request to create the session
+      // For now, we'll use a placeholder signal request that will be updated later
+      // This is just to initialize the session and get the ARN
+      const initialSignalRequest = JSON.stringify({
+        type: 'initial',
+        timestamp: new Date().toISOString(),
+        clientId: `react-native-client-${Math.random().toString(36).substring(2, 15)}`,
+      });
+
+      console.log('Calling createStreamSession API with initial signal request...');
+      const sessionResponse = await createStreamSession(game.appId, game.sgId, initialSignalRequest, selectedRegions);
+
+      console.log('Stream session created - Response:', JSON.stringify(sessionResponse));
+
+      if (!sessionResponse || !sessionResponse.arn) {
+        throw new Error('Failed to create stream session: No session ARN returned');
+      }
+
+      // Navigate to the game player with the game details and session data
       router.push({
         pathname: '/game-player',
         params: {
@@ -136,6 +153,10 @@ export default function GamesScreen() {
           sgId: game.sgId,
           name: game.name,
           regions: JSON.stringify(selectedRegions),
+          sessionArn: sessionResponse.arn,
+          sessionRegion: sessionResponse.region || '',
+          sessionStatus: sessionResponse.status || '',
+          initialSignalResponse: sessionResponse.signalResponse || '',
         },
       });
 
@@ -145,6 +166,8 @@ export default function GamesScreen() {
         sgId: game.sgId,
         name: game.name,
         regions: JSON.stringify(selectedRegions),
+        sessionArn: sessionResponse.arn,
+        sessionStatus: sessionResponse.status || '',
       });
     } catch (error) {
       console.error('Error starting game:', error);
